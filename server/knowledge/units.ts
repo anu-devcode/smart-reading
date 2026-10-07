@@ -7,11 +7,10 @@ import type {
   UnitType,
 } from "../../shared/types.ts";
 import { RELATIONS, UNIT_TYPES } from "../../shared/types.ts";
-import { paragraphBounds } from "../text/anchor.ts";
 import { forIndex } from "../text/dehyphen.ts";
-import { getPageText } from "../library.ts";
+
 import { badRequest, notFound } from "../errors.ts";
-import { createHighlight, resolveSelection } from "./highlights.ts";
+import { insertHighlight, paragraphAround, resolveSpan, type SelectionInput } from "./highlights.ts";
 import { toBlob } from "../search/embeddings.ts";
 
 export interface UnitRow {
@@ -20,7 +19,10 @@ export interface UnitRow {
   content: string;
   doc_id: number;
   doc_title: string;
+  doc_author: string | null;
+  doc_year: number | null;
   page: number;
+  end_page: number | null;
   start: number;
   end: number;
   source_text: string;
@@ -32,7 +34,7 @@ export interface UnitRow {
   accepted_at: string;
 }
 
-export const UNIT_SELECT = `SELECT u.*, d.title AS doc_title FROM units u JOIN documents d ON d.id = u.doc_id`;
+export const UNIT_SELECT = `SELECT u.*, d.title AS doc_title, d.author AS doc_author, d.year AS doc_year FROM units u JOIN documents d ON d.id = u.doc_id`;
 
 export function rowToUnit(r: UnitRow): UnitDto {
   return {
@@ -41,7 +43,10 @@ export function rowToUnit(r: UnitRow): UnitDto {
     content: r.content,
     docId: r.doc_id,
     docTitle: r.doc_title,
+    docAuthor: r.doc_author,
+    docYear: r.doc_year,
     page: r.page,
+    endPage: r.end_page ?? r.page,
     start: r.start,
     end: r.end,
     sourceText: r.source_text,
@@ -83,15 +88,10 @@ async function embedUnit(ctx: Ctx, id: number, content: string): Promise<Float32
   }
 }
 
-export interface CreateUnitInput {
+export interface CreateUnitInput extends SelectionInput {
   type: UnitType;
   /** required for idea / concept / question. Ignored for quotes (a quote is always the exact source text). */
   content?: string;
-  docId: number;
-  page: number;
-  /** text copied from the reader; resolved to an exact span of the page text */
-  selectionText: string;
-  hint?: number;
   note?: string | null;
   origin?: "manual" | "distill";
   /** set when the unit came from a Distill candidate */
@@ -100,7 +100,7 @@ export interface CreateUnitInput {
 
 export async function createUnit(ctx: Ctx, input: CreateUnitInput): Promise<CreateUnitResponse> {
   if (!UNIT_TYPES.includes(input.type)) throw badRequest("Unknown unit type");
-  const { span } = resolveSelection(ctx, input.docId, input.page, input.selectionText, input.hint);
+  const span = resolveSpan(ctx, input);
 
   let content: string;
   if (input.type === "quote") {
@@ -116,24 +116,20 @@ export async function createUnit(ctx: Ctx, input: CreateUnitInput): Promise<Crea
 
   let highlightId: number | null = null;
   if (input.type === "quote") {
-    highlightId = createHighlight(ctx, {
-      docId: input.docId,
-      page: input.page,
-      selectionText: span.text,
-      hint: span.start,
-    }).id;
+    highlightId = insertHighlight(ctx, input.docId, span).id;
   }
 
   const info = ctx.db
     .prepare(
-      `INSERT INTO units(type, content, doc_id, page, start, end, source_text, passage_id, highlight_id, note, origin, edited, accepted_at)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+      `INSERT INTO units(type, content, doc_id, page, end_page, start, end, source_text, passage_id, highlight_id, note, origin, edited, accepted_at)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
     )
     .run(
       input.type,
       content,
       input.docId,
       input.page,
+      span.endPage,
       span.start,
       span.end,
       span.text,
@@ -220,8 +216,7 @@ export function listUnits(ctx: Ctx, f: { type?: UnitType; docId?: number } = {})
 export function getUnitContext(ctx: Ctx, id: number): UnitContextDto {
   const unit = getUnit(ctx, id);
   if (!unit) throw notFound("Unit not found");
-  const pageText = getPageText(ctx, unit.docId, unit.page) ?? "";
-  const b = paragraphBounds(pageText, unit.start, unit.end);
+  const para = paragraphAround(ctx, unit.docId, unit);
   const out = ctx.db
     .prepare(`SELECT id, relation, to_id other FROM unit_links WHERE from_id = ?`)
     .all(id) as { id: number; relation: Relation; other: number }[];
@@ -237,7 +232,7 @@ export function getUnitContext(ctx: Ctx, id: number): UnitContextDto {
     const other = getUnit(ctx, l.other);
     if (other) links.push({ id: l.id, relation: l.relation, direction: "in", other });
   }
-  return { unit, paragraph: pageText.slice(b.start, b.end), paragraphStart: b.start, links };
+  return { unit, paragraph: para.text, paragraphStart: para.start, links };
 }
 
 // ---- relations: created only by the user ----

@@ -200,10 +200,11 @@ export class EmbedJob {
     this.error = undefined;
     try {
       for (const kind of ["passage", "unit"] as const) {
-        const table = kind === "passage" ? "passages" : "units";
-        const textCol = kind === "passage" ? "text" : "content";
+        // Passages are embedded from the keyword index text (line-end hyphens already resolved).
+        const from = kind === "passage" ? "passages t JOIN passages_fts f ON f.rowid = t.id" : "units t";
+        const textCol = kind === "passage" ? "f.body" : "t.content";
         const select = this.db.prepare(
-          `SELECT t.id id, t.${textCol} text FROM ${table} t WHERE NOT EXISTS
+          `SELECT t.id id, ${textCol} text FROM ${from} WHERE NOT EXISTS
            (SELECT 1 FROM embeddings e WHERE e.kind='${kind}' AND e.ref_id=t.id AND e.model=?) LIMIT 16`,
         );
         const insert = this.db.prepare(
@@ -213,7 +214,7 @@ export class EmbedJob {
           const rows = select.all(model) as { id: number; text: string }[];
           if (rows.length === 0) break;
           const vecs = await embedder.embed(
-            rows.map((r) => forIndex(r.text)),
+            rows.map((r) => (kind === "unit" ? forIndex(r.text) : r.text)),
             "passage",
           );
           const tx = this.db.transaction(() => {

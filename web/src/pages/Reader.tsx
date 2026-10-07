@@ -1,9 +1,9 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+﻿import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { Candidate, DocumentDto, HighlightDto, PageDto, ReadingStatus, StatusDto, UnitDto, UnitType } from "../../../shared/types";
-import { READING_STATUSES } from "../../../shared/types";
+import { MAX_SPAN_PAGES, READING_STATUSES, pagesLabel } from "../../../shared/types";
 import { compactWithMap } from "../../../shared/compact";
 import { api } from "../api";
-import { Empty, SuggestionBar, TYPE_LABEL, TypeBadge, useToast, type Suggestion } from "../components";
+import { CopyCitation, Empty, ErrorState, Loading, READING_LABEL, SuggestionBar, TYPE_LABEL, TypeBadge, useToast, type Suggestion } from "../components";
 import { href, type Route } from "../router";
 import { PdfPage, TextPage, usePdf, type Mark, type PageHandle, type Registry } from "../reader/pages";
 import { compactOffsetOfRange } from "../reader/locate";
@@ -12,12 +12,24 @@ interface Flash {
   page: number;
   text: string;
   start: number;
+  /** set when the span ends on a later page */
+  endPage?: number;
+  end?: number;
+}
+
+interface TocEntry {
+  title: string;
+  page: number;
+  depth: number;
 }
 
 interface Bar {
   page: number;
   text: string;
   hint?: number;
+  /** last page and the text selected on it, when the selection crosses pages */
+  endPage?: number;
+  endText?: string;
   x: number;
   y: number;
 }
@@ -26,6 +38,8 @@ interface ComposerState {
   page: number;
   text: string;
   hint?: number;
+  endPage?: number;
+  endText?: string;
   type: Exclude<UnitType, "quote">;
   content: string;
   note: string;
@@ -39,8 +53,13 @@ interface DistillCandidate extends Candidate {
 interface DistillState {
   loading: boolean;
   page: number;
+  /** what to send back when accepting: the exact span for one page, the original parts for several */
   anchorText: string;
   hint?: number;
+  endPage?: number;
+  endText?: string;
+  /** the exact source text, for display */
+  shownText: string;
   candidates: DistillCandidate[];
   dropped: number;
   /** how many verified candidates were offered in total (candidates shrinks as you decide) */
@@ -112,8 +131,72 @@ export function ReaderPage({ route, status }: { route: Route; status: StatusDto 
     };
   }, [docId]);
 
+  // While scanned pages are being read, pick up each page as it becomes searchable text.
+  const ocrPending = doc?.ocrPending ?? 0;
+  useEffect(() => {
+    if (ocrPending <= 0) return;
+    let alive = true;
+    const t = setInterval(() => {
+      Promise.all([api.document(docId), api.pages(docId)])
+        .then(([d, p]) => {
+          if (!alive) return;
+          setDoc(d);
+          setPages(p);
+        })
+        .catch(() => undefined);
+    }, 2500);
+    return () => {
+      alive = false;
+      clearInterval(t);
+    };
+  }, [ocrPending, docId]);
+
   const isPdf = doc?.kind === "pdf";
   const { pdf, error: pdfError } = usePdf(isPdf ? `/api/documents/${docId}/file` : null);
+
+  // ---------- table of contents: the PDF's own outline, or the headings of a Markdown file ----------
+  const [pdfToc, setPdfToc] = useState<TocEntry[]>([]);
+  useEffect(() => {
+    setPdfToc([]);
+    if (!pdf) return;
+    let alive = true;
+    (async () => {
+      const outline = (await pdf.getOutline().catch(() => null)) ?? [];
+      const out: TocEntry[] = [];
+      const walk = async (items: typeof outline, depth: number) => {
+        for (const it of items) {
+          try {
+            const dest = typeof it.dest === "string" ? await pdf.getDestination(it.dest) : it.dest;
+            const ref = dest?.[0];
+            const page = ref == null ? 0 : typeof ref === "number" ? ref + 1 : (await pdf.getPageIndex(ref)) + 1;
+            if (page) out.push({ title: it.title, page, depth });
+          } catch {
+            // an entry pointing nowhere is skipped
+          }
+          if (it.items?.length && depth < 3) await walk(it.items, depth + 1);
+        }
+      };
+      await walk(outline, 0);
+      if (alive) setPdfToc(out);
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [pdf]);
+  const toc = useMemo<TocEntry[]>(() => {
+    if (doc?.kind === "pdf") return pdfToc;
+    if (doc?.kind !== "markdown") return [];
+    const out: TocEntry[] = [];
+    let inFence = false;
+    for (const p of pages) {
+      for (const line of p.text.split("\n")) {
+        if (/^\s*(```|~~~)/.test(line)) inFence = !inFence;
+        const m = inFence ? null : /^(#{1,4})\s+(.+)$/.exec(line);
+        if (m) out.push({ title: m[2].trim(), page: p.page, depth: m[1].length - 1 });
+      }
+    }
+    return out;
+  }, [doc?.kind, pdfToc, pages]);
 
   useEffect(() => {
     if (!pdf) return;
@@ -184,7 +267,7 @@ export function ReaderPage({ route, status }: { route: Route; status: StatusDto 
         .catch(() => pageParam && scrollToPage(pageParam));
     } else if (unit) {
       const u = units.find((x) => x.id === Number(unit));
-      if (u) showFlash({ page: u.page, text: u.sourceText, start: u.start });
+      if (u) showFlash({ page: u.page, text: u.sourceText, start: u.start, endPage: u.endPage, end: u.end });
       else if (pageParam) scrollToPage(pageParam);
     } else if (pageParam) {
       scrollToPage(pageParam);
@@ -223,15 +306,27 @@ export function ReaderPage({ route, status }: { route: Route; status: StatusDto 
       l.push(mark);
       m.set(page, l);
     };
+    // A span over several pages is drawn as one mark per page: the tail of the first, whole pages in
+    // between, the head of the last. The text comes from the stored pages, so it matches exactly.
+    const addSpan = (span: { page: number; endPage: number; start: number; end: number; text: string }, mark: Omit<Mark, "text" | "start">) => {
+      if (span.endPage <= span.page) return add(span.page, { ...mark, text: span.text, start: span.start });
+      for (let p = span.page; p <= span.endPage; p++) {
+        const full = pageTextOf(p);
+        const from = p === span.page ? span.start : 0;
+        const to = p === span.endPage ? span.end : full.length;
+        const text = full.slice(from, to);
+        if (text.trim()) add(p, { ...mark, text, start: from });
+      }
+    };
     for (const h of highlights) {
-      add(h.page, { key: `h-${h.id}`, text: h.text, start: h.start, className: h.stale ? "hl stale" : "hl", title: h.note ?? undefined });
+      addSpan(h, { key: `h-${h.id}`, className: h.stale ? "hl stale" : "hl", title: h.note ?? undefined });
     }
     for (const u of units) {
-      if (u.type !== "quote") add(u.page, { key: `u-${u.id}`, text: u.sourceText, start: u.start, className: "unit-mark", title: `${TYPE_LABEL[u.type]}: ${u.content}` });
+      if (u.type !== "quote") addSpan({ ...u, text: u.sourceText }, { key: `u-${u.id}`, className: "unit-mark", title: `${TYPE_LABEL[u.type]}: ${u.content}` });
     }
-    if (flash) add(flash.page, { key: "flash", text: flash.text, start: flash.start, className: "flash" });
+    if (flash) addSpan({ page: flash.page, endPage: flash.endPage ?? flash.page, start: flash.start, end: flash.end ?? 0, text: flash.text }, { key: "flash", className: "flash" });
     return m;
-  }, [highlights, units, flash]);
+  }, [highlights, units, flash, pageTextOf]);
 
   const onMarkClick = useCallback((key: string) => setTab(key.startsWith("u-") ? "knowledge" : "highlights"), []);
 
@@ -244,17 +339,33 @@ export function ReaderPage({ route, status }: { route: Route; status: StatusDto 
     const a = pageOf(range.startContainer);
     const b = pageOf(range.endContainer);
     if (!a || !b) return setBar(null);
-    if (a !== b) {
-      toast("Select within a single page.");
-      return setBar(null);
-    }
-    const text = sel.toString().trim();
-    if (!text) return setBar(null);
     const page = Number(a.dataset.page);
+    const endPage = Number(b.dataset.page);
     const ix = registry.current.get(page)?.index();
     const hint = ix ? compactOffsetOfRange(ix, range) : undefined;
     const r = range.getBoundingClientRect();
-    setBar({ page, text, hint, x: r.left + r.width / 2, y: r.top });
+
+    if (a === b) {
+      const text = sel.toString().trim();
+      if (!text) return setBar(null);
+      return setBar({ page, text, hint, x: r.left + r.width / 2, y: r.top });
+    }
+
+    // The selection crosses pages. Send the text on its first and last page; the server takes the
+    // pages in between whole from the stored text (they may not even be rendered right now).
+    if (endPage - page + 1 > MAX_SPAN_PAGES) {
+      toast(`A selection can cover at most ${MAX_SPAN_PAGES} pages.`);
+      return setBar(null);
+    }
+    const layerOf = (el: HTMLElement) => (el.querySelector(".textLayer, .text-body") as HTMLElement | null) ?? el;
+    const first = range.cloneRange();
+    first.setEnd(layerOf(a), layerOf(a).childNodes.length);
+    const last = range.cloneRange();
+    last.setStart(layerOf(b), 0);
+    const text = first.toString().trim();
+    const endText = last.toString().trim();
+    if (!text || !endText) return setBar(null);
+    setBar({ page, text, hint, endPage, endText, x: r.left + r.width / 2, y: r.top });
   }, [toast]);
 
   const clearSelection = () => {
@@ -262,11 +373,12 @@ export function ReaderPage({ route, status }: { route: Route; status: StatusDto 
     setBar(null);
   };
 
-  const sourceRef = (b: { page: number; text: string; hint?: number }) => ({
+  const sourceRef = (b: { page: number; text: string; hint?: number; endPage?: number; endText?: string }) => ({
     docId,
     page: b.page,
     selectionText: b.text,
     hint: b.hint,
+    ...(b.endPage && b.endPage !== b.page ? { endPage: b.endPage, endText: b.endText } : {}),
   });
 
   const doHighlight = async () => {
@@ -287,7 +399,7 @@ export function ReaderPage({ route, status }: { route: Route; status: StatusDto 
       await api.createUnit({ type: "quote", ...sourceRef(bar) });
       await reloadKnowledge();
       setTab("knowledge");
-      toast(`Saved as a quote (p. ${bar.page}).`);
+      toast(`Saved as a quote (${pagesLabel(bar.page, bar.endPage ?? bar.page)}).`);
     } catch (e) {
       toast((e as Error).message, "error");
     }
@@ -296,7 +408,7 @@ export function ReaderPage({ route, status }: { route: Route; status: StatusDto 
 
   const doWrite = () => {
     if (!bar) return;
-    setComposer({ page: bar.page, text: bar.text, hint: bar.hint, type: "idea", content: "", note: "" });
+    setComposer({ page: bar.page, text: bar.text, hint: bar.hint, endPage: bar.endPage, endText: bar.endText, type: "idea", content: "", note: "" });
     clearSelection();
   };
 
@@ -305,13 +417,18 @@ export function ReaderPage({ route, status }: { route: Route; status: StatusDto 
     const b = bar;
     clearSelection();
     setComposer(null);
-    setDistill({ loading: true, page: b.page, anchorText: b.text, hint: b.hint, candidates: [], dropped: 0, proposed: 0, error: null });
+    const multi = !!b.endPage && b.endPage !== b.page;
+    setDistill({ loading: true, page: b.page, anchorText: b.text, shownText: b.text, hint: b.hint, endPage: b.endPage, endText: b.endText, candidates: [], dropped: 0, proposed: 0, error: null });
     try {
       const r = await api.distill(sourceRef(b));
       setDistill({
         loading: false,
         page: b.page,
-        anchorText: r.anchor.text,
+        // one page: the exact span is the safest thing to send back; several pages: the original parts
+        anchorText: multi ? b.text : r.anchor.text,
+        shownText: r.anchor.text,
+        endPage: b.endPage,
+        endText: b.endText,
         hint: b.hint,
         candidates: r.candidates.map((c, i) => ({ ...c, id: i, edited: c.text })),
         dropped: r.dropped,
@@ -319,7 +436,7 @@ export function ReaderPage({ route, status }: { route: Route; status: StatusDto 
         error: null,
       });
     } catch (e) {
-      setDistill({ loading: false, page: b.page, anchorText: b.text, hint: b.hint, candidates: [], dropped: 0, proposed: 0, error: (e as Error).message });
+      setDistill({ loading: false, page: b.page, anchorText: b.text, shownText: b.text, hint: b.hint, endPage: b.endPage, endText: b.endText, candidates: [], dropped: 0, proposed: 0, error: (e as Error).message });
     }
   };
 
@@ -336,10 +453,10 @@ export function ReaderPage({ route, status }: { route: Route; status: StatusDto 
         type: composer.type,
         content: composer.content,
         note: composer.note || null,
-        ...sourceRef({ page: composer.page, text: composer.text, hint: composer.hint }),
+        ...sourceRef({ page: composer.page, text: composer.text, hint: composer.hint, endPage: composer.endPage, endText: composer.endText }),
       });
       setComposer(null);
-      toast(`${TYPE_LABEL[composer.type]} saved, linked to p. ${composer.page}.`);
+      toast(`${TYPE_LABEL[composer.type]} saved, linked to ${pagesLabel(composer.page, composer.endPage ?? composer.page)}.`);
       await afterCreate(r);
     } catch (e) {
       toast((e as Error).message, "error");
@@ -353,7 +470,7 @@ export function ReaderPage({ route, status }: { route: Route; status: StatusDto 
       const r = await api.createUnit({
         type: c.type,
         content: c.edited,
-        ...sourceRef({ page: distill.page, text: distill.anchorText, hint: distill.hint }),
+        ...sourceRef({ page: distill.page, text: distill.anchorText, hint: distill.hint, endPage: distill.endPage, endText: distill.endText }),
         origin: "distill",
         candidateAction: edited ? "edit" : "accept",
       });
@@ -405,8 +522,22 @@ export function ReaderPage({ route, status }: { route: Route; status: StatusDto 
   };
 
   // ---------- render ----------
-  if (loadError) return <div className="page narrow"><div className="note bad">{loadError}</div><a href={href("")}>Back to the library</a></div>;
-  if (!doc) return <div className="page"><Empty>Opening…</Empty></div>;
+  if (loadError)
+    return (
+      <div className="page narrow">
+        <ErrorState message={loadError}>
+          <a className="btn" href={href("")}>
+            Back to the library
+          </a>
+        </ErrorState>
+      </div>
+    );
+  if (!doc)
+    return (
+      <div className="page narrow">
+        <Loading label="Opening the document…" rows={2} />
+      </div>
+    );
 
   const failed = doc.processingStatus === "failed";
   const barLeft = bar ? Math.max(8, Math.min(window.innerWidth - 400, bar.x - 190)) : 0;
@@ -414,18 +545,19 @@ export function ReaderPage({ route, status }: { route: Route; status: StatusDto 
 
   return (
     <div className="reader">
-      <div className="reader-head">
-        <a href={href("")} className="link">
-          ← Library
-        </a>
-        <strong className="reader-title" title={doc.title}>
-          {doc.title}
-        </strong>
-        <span className="muted small">
+      <div className="reader-head" role="toolbar" aria-label="Reader">
+        <nav className="crumbs" aria-label="Breadcrumb">
+          <a href={href("")}>Library</a>
+          <span aria-hidden="true">/</span>
+          <strong className="reader-title" title={doc.title}>
+            {doc.title}
+          </strong>
+        </nav>
+        <span className="muted small page-count" aria-live="polite">
           p. {curPage} / {doc.pageCount}
         </span>
-        <form onSubmit={doFind} className="row">
-          <input className="find" value={find} onChange={(e) => setFind(e.target.value)} placeholder="Find in document" />
+        <form onSubmit={doFind} className="row" role="search">
+          <input className="find" type="search" value={find} onChange={(e) => setFind(e.target.value)} placeholder="Find in document" aria-label="Find in document" />
         </form>
         {isPdf && (
           <span className="row">
@@ -438,10 +570,28 @@ export function ReaderPage({ route, status }: { route: Route; status: StatusDto 
             </button>
           </span>
         )}
+        {toc.length > 0 && (
+          <select
+            value=""
+            onChange={(e) => {
+              const n = Number(e.target.value);
+              if (n) scrollToPage(n);
+            }}
+            aria-label="Contents"
+          >
+            <option value="">Contents</option>
+            {toc.map((t, i) => (
+              <option key={i} value={t.page}>
+                {"\u00A0\u00A0".repeat(t.depth)}
+                {t.title} ({t.page})
+              </option>
+            ))}
+          </select>
+        )}
         <select value={doc.readingStatus} onChange={(e) => void setReading(e.target.value as ReadingStatus)} aria-label="Reading status">
           {READING_STATUSES.map((s) => (
             <option key={s} value={s}>
-              {s[0].toUpperCase() + s.slice(1)}
+              {READING_LABEL[s]}
             </option>
           ))}
         </select>
@@ -449,14 +599,22 @@ export function ReaderPage({ route, status }: { route: Route; status: StatusDto 
 
       <div className="reader-body">
         <div className="reader-scroll" ref={scroller} onMouseUp={() => setTimeout(onSelect, 0)} onKeyUp={() => setTimeout(onSelect, 0)}>
-          {doc.processingStatus === "partial" && doc.failureNotes.map((n, i) => <div key={i} className="note warn banner">{n}</div>)}
+          {!failed && doc.failureNotes.map((n, i) => <div key={i} className="note warn banner">{n}</div>)}
           {failed && (
             <div className="note bad banner">
-              {doc.failureNotes.join(" ") || "This document has no readable text."} You can still open the original file, but it cannot be searched or highlighted here.
+              {doc.failureNotes.join(" ") || "This document has no readable text."} You can still open the original file, but it cannot be searched or highlighted here.{" "}
+              <a href={`/api/documents/${docId}/file`} target="_blank" rel="noreferrer">
+                Open the original file
+              </a>
             </div>
           )}
-          {doc.processingStatus === "processing" && <div className="note banner">Still processing this document…</div>}
-          {pdfError && <div className="note bad banner">Could not display the PDF: {pdfError}</div>}
+          {doc.processingStatus === "processing" && doc.ocrPending === 0 && <div className="note banner">Still processing this document…</div>}
+          {pdfError && <div className="note bad banner" role="alert">Could not display the PDF: {pdfError}</div>}
+          {!failed && isPdf && !pdf && !pdfError && (
+            <div className="note banner" role="status">
+              Loading pages…
+            </div>
+          )}
 
           {!failed && isPdf && pdf &&
             Array.from({ length: pdf.numPages }, (_, i) => i + 1).map((n) => (
@@ -470,6 +628,8 @@ export function ReaderPage({ route, status }: { route: Route; status: StatusDto 
                 marks={marksByPage.get(n) ?? EMPTY}
                 register={register}
                 onMarkClick={onMarkClick}
+                ocr={pages.find((p) => p.page === n)?.ocr}
+                loadOcrWords={() => api.ocrWords(docId, n)}
               />
             ))}
 
@@ -490,7 +650,7 @@ export function ReaderPage({ route, status }: { route: Route; status: StatusDto 
                   Close
                 </button>
               </div>
-              <blockquote className="origin">{distill.anchorText}</blockquote>
+              <blockquote className="origin">{distill.shownText}</blockquote>
               {distill.loading && <p className="muted">Reading the passage…</p>}
               {distill.error && (
                 <div className="note bad">
@@ -520,6 +680,11 @@ export function ReaderPage({ route, status }: { route: Route; status: StatusDto 
                   </div>
                 </div>
               ))}
+              {distill.proposed > 0 && distill.dropped > 0 && (
+                <p className="muted small">
+                  {distill.dropped} more suggestion{distill.dropped > 1 ? "s were" : " was"} discarded because {distill.dropped > 1 ? "their evidence was" : "its evidence was"} not in the text.
+                </p>
+              )}
               {distill.candidates.length > 0 && <p className="muted small">Candidates are only suggestions. Nothing is kept until you accept it, and unaccepted ones disappear when you close this.</p>}
             </section>
           )}
@@ -532,7 +697,15 @@ export function ReaderPage({ route, status }: { route: Route; status: StatusDto 
                   Cancel
                 </button>
               </div>
-              <blockquote className="origin">{composer.text}</blockquote>
+              <blockquote className="origin">
+                {composer.text}
+                {composer.endPage && composer.endPage !== composer.page && (
+                  <>
+                    <span className="muted small"> [page {composer.page} / {composer.endPage}] </span>
+                    {composer.endText}
+                  </>
+                )}
+              </blockquote>
               <div className="row">
                 {(["idea", "concept", "question"] as const).map((t) => (
                   <label key={t} className="radio">
@@ -543,7 +716,7 @@ export function ReaderPage({ route, status }: { route: Route; status: StatusDto 
               <textarea autoFocus rows={4} placeholder="What do you want to remember?" value={composer.content} onChange={(e) => setComposer({ ...composer, content: e.target.value })} />
               <input placeholder="Note (optional)" value={composer.note} onChange={(e) => setComposer({ ...composer, note: e.target.value })} />
               <button className="primary" disabled={!composer.content.trim()} onClick={() => void saveComposer()}>
-                Save, linked to p. {composer.page}
+                Save, linked to {pagesLabel(composer.page, composer.endPage ?? composer.page)}
               </button>
             </section>
           )}
@@ -564,14 +737,17 @@ export function ReaderPage({ route, status }: { route: Route; status: StatusDto 
                 <div key={u.id} className="side-item">
                   <div className="row between">
                     <TypeBadge type={u.type} />
-                    <button className="link small" onClick={() => showFlash({ page: u.page, text: u.sourceText, start: u.start })}>
-                      p. {u.page}
+                    <button className="link small" onClick={() => showFlash({ page: u.page, text: u.sourceText, start: u.start, endPage: u.endPage, end: u.end })}>
+                      {pagesLabel(u.page, u.endPage)}
                     </button>
                   </div>
                   <div className="content small">{u.content}</div>
-                  <a className="small" href={href(`knowledge/${u.id}`)}>
-                    Details
-                  </a>
+                  <div className="row">
+                    <a className="small" href={href(`knowledge/${u.id}`)}>
+                      Details
+                    </a>
+                    <CopyCitation unit={u} />
+                  </div>
                 </div>
               ))}
             </div>
@@ -583,8 +759,8 @@ export function ReaderPage({ route, status }: { route: Route; status: StatusDto 
               {highlights.map((h) => (
                 <div key={h.id} className="side-item">
                   <div className="row between">
-                    <button className="link small" onClick={() => showFlash({ page: h.page, text: h.text, start: h.start })}>
-                      p. {h.page}
+                    <button className="link small" onClick={() => showFlash({ page: h.page, text: h.text, start: h.start, endPage: h.endPage, end: h.end })}>
+                      {pagesLabel(h.page, h.endPage)}
                     </button>
                     <button
                       className="link danger small"

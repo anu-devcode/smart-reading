@@ -10,6 +10,31 @@ export const UNIT_TYPES: UnitType[] = ["quote", "idea", "concept", "question"];
 export const READING_STATUSES: ReadingStatus[] = ["unread", "reading", "finished", "revisit"];
 export const RELATIONS: Relation[] = ["same_idea", "supports", "contradicts"];
 
+/** Text of consecutive pages is joined with this when a span crosses a page boundary. */
+export const PAGE_JOIN = "\n\n";
+/** The most pages one highlight or quote may cover. */
+export const MAX_SPAN_PAGES = 5;
+
+/** "p. 2" or "pp. 2-3" */
+export function pagesLabel(page: number, endPage: number): string {
+  return endPage > page ? `pp. ${page}\u2013${endPage}` : `p. ${page}`;
+}
+
+/** A unit as you would paste it elsewhere: a quote in quotation marks, your own words as they are, then the source. */
+export function citationText(u: {
+  type: UnitType;
+  content: string;
+  docTitle: string;
+  docAuthor: string | null;
+  docYear: number | null;
+  page: number;
+  endPage: number;
+}): string {
+  const source = `${u.docAuthor ? `${u.docAuthor}, ` : ""}${u.docTitle}${u.docYear ? ` (${u.docYear})` : ""}, ${pagesLabel(u.page, u.endPage)}`;
+  const content = u.content.replace(/\s+/g, " ").trim();
+  return u.type === "quote" ? `\u201C${content}\u201D \u2014 ${source}` : `${content}\n(${source})`;
+}
+
 export interface DocumentDto {
   id: number;
   title: string;
@@ -25,18 +50,37 @@ export interface DocumentDto {
   unitCount: number;
   /** pending = meaning-search index still being built for this document */
   embeddingPending: boolean;
+  /** scanned pages still waiting to be read with OCR (the document counts as processing meanwhile) */
+  ocrPending: number;
 }
 
 export interface PageDto {
   page: number;
   text: string;
   status: "ok" | "empty" | "garbled";
+  /** the text of this page was recognised from an image (OCR) and may contain recognition mistakes */
+  ocr: boolean;
 }
 
+/** One recognised word of an OCR page: its place in the page text and its box on the page (0..1 of width/height). */
+export interface OcrWordDto {
+  s: number;
+  e: number;
+  x0: number;
+  y0: number;
+  x1: number;
+  y1: number;
+}
+
+/**
+ * A span of a document. It starts at `start` on `page` and ends at `end` on `endPage` (= `page` for the usual
+ * single-page case). A span over several pages has the text of each page joined with PAGE_JOIN.
+ */
 export interface HighlightDto {
   id: number;
   docId: number;
   page: number;
+  endPage: number;
   start: number;
   end: number;
   text: string;
@@ -50,7 +94,10 @@ export interface UnitDto {
   content: string;
   docId: number;
   docTitle: string;
+  docAuthor: string | null;
+  docYear: number | null;
   page: number;
+  endPage: number;
   start: number;
   end: number;
   sourceText: string;
@@ -136,7 +183,7 @@ export interface Candidate {
 export interface DistillResponse {
   candidates: Candidate[];
   dropped: number;
-  anchor: { page: number; start: number; end: number; text: string };
+  anchor: { page: number; endPage: number; start: number; end: number; text: string };
 }
 
 export interface CreateUnitResponse {
@@ -158,9 +205,26 @@ export interface StatusDto {
     error?: string;
   };
   ai: { configured: boolean; model: string | null };
+  ocr: { enabled: boolean; language: string; state: "off" | "idle" | "working" | "unavailable"; pending: number; error?: string };
   libraryDir: string;
 }
 
 export interface SettingsDto {
   ai: { baseUrl: string; model: string; apiKeySet: boolean };
+  ocr: { enabled: boolean; language: string };
+}
+
+export interface AccountDto {
+  id: number;
+  username: string;
+  isAdmin: boolean;
+  createdAt: string;
+}
+
+export interface SessionDto {
+  /** false = a single library on this computer with no sign-in */
+  accounts: boolean;
+  /** no account exists yet: the first person to open the app creates the owner account */
+  setupNeeded: boolean;
+  account: AccountDto | null;
 }

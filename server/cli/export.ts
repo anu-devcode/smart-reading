@@ -1,9 +1,17 @@
 import { loadConfig } from "../config.ts";
-import { createContext } from "../context.ts";
 import { exportToDir } from "../knowledge/export.ts";
+import { closeLibraries, openLibraries, userArg } from "./open.ts";
 
-const ctx = createContext(loadConfig({ embeddings: "off" }), { embedder: null });
-const { dir, files } = exportToDir(ctx);
-console.log(`Exported to ${dir}`);
-files.forEach((f) => console.log("  " + f));
-ctx.db.close();
+// usage: npm run export [-- --user <name>]   (with accounts and no --user, every account is exported)
+try {
+  const libs = openLibraries(loadConfig({ embeddings: "off" }), { username: userArg(process.argv) });
+  for (const l of libs) {
+    const { dir, files } = exportToDir(l.ctx);
+    console.log(`Exported${l.username ? ` ${l.username}'s library` : ""} to ${dir}`);
+    files.forEach((f) => console.log("  " + f));
+  }
+  closeLibraries(libs);
+} catch (e) {
+  console.error((e as Error).message);
+  process.exit(1);
+}

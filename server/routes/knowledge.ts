@@ -1,7 +1,7 @@
-import type { FastifyInstance } from "fastify";
+﻿import type { FastifyInstance } from "fastify";
 import type { Ctx } from "../context.ts";
 import type { Relation, SettingsDto, UnitType } from "../../shared/types.ts";
-import { readAiSettings, writeAiSettings } from "../config.ts";
+import { readAiSettings, readOcrSettings, writeAiSettings, writeOcrSettings } from "../config.ts";
 import { badRequest } from "../errors.ts";
 import {
   createHighlight,
@@ -22,44 +22,50 @@ import {
 import { distillSelection, providerFromSettings, type DistillProvider } from "../knowledge/distill.ts";
 import { exportToDir, buildExport, buildMarkdown } from "../knowledge/export.ts";
 
-export function registerKnowledgeRoutes(app: FastifyInstance, ctx: Ctx, providerOverride?: DistillProvider) {
+/** A selection from the reader; endPage/endText are set when it crosses pages. */
+interface SelectionBody {
+  docId: number;
+  page: number;
+  selectionText: string;
+  hint?: number;
+  endPage?: number;
+  endText?: string;
+}
+
+export function registerKnowledgeRoutes(app: FastifyInstance, providerOverride?: DistillProvider) {
   // ---- highlights ----
   app.get<{ Params: { id: string } }>("/api/documents/:id/highlights", async (req) =>
-    listHighlights(ctx, Number(req.params.id)),
+    listHighlights(req.ctx, Number(req.params.id)),
   );
 
   app.post<{
-    Body: { docId: number; page: number; selectionText: string; hint?: number; note?: string | null };
+    Body: SelectionBody & { note?: string | null };
   }>("/api/highlights", async (req) => {
     const b = req.body;
     if (!b || !b.docId || !b.page || !b.selectionText) throw badRequest("docId, page and selectionText are required");
-    return createHighlight(ctx, b);
+    return createHighlight(req.ctx, b);
   });
 
   app.patch<{ Params: { id: string }; Body: { note?: string | null } }>("/api/highlights/:id", async (req) =>
-    updateHighlight(ctx, Number(req.params.id), req.body?.note ?? null),
+    updateHighlight(req.ctx, Number(req.params.id), req.body?.note ?? null),
   );
 
   app.delete<{ Params: { id: string } }>("/api/highlights/:id", async (req) => {
-    deleteHighlight(ctx, Number(req.params.id));
+    deleteHighlight(req.ctx, Number(req.params.id));
     return { ok: true };
   });
 
   // ---- units ----
   app.get<{ Querystring: { type?: UnitType; docId?: string } }>("/api/units", async (req) =>
-    listUnits(ctx, { type: req.query.type, docId: req.query.docId ? Number(req.query.docId) : undefined }),
+    listUnits(req.ctx, { type: req.query.type, docId: req.query.docId ? Number(req.query.docId) : undefined }),
   );
 
-  app.get<{ Params: { id: string } }>("/api/units/:id", async (req) => getUnitContext(ctx, Number(req.params.id)));
+  app.get<{ Params: { id: string } }>("/api/units/:id", async (req) => getUnitContext(req.ctx, Number(req.params.id)));
 
   app.post<{
-    Body: {
+    Body: SelectionBody & {
       type: UnitType;
       content?: string;
-      docId: number;
-      page: number;
-      selectionText: string;
-      hint?: number;
       note?: string | null;
       origin?: "manual" | "distill";
       candidateAction?: "accept" | "edit";
@@ -69,16 +75,16 @@ export function registerKnowledgeRoutes(app: FastifyInstance, ctx: Ctx, provider
     if (!b || !b.type || !b.docId || !b.page || !b.selectionText) {
       throw badRequest("type, docId, page and selectionText are required");
     }
-    return createUnit(ctx, b);
+    return createUnit(req.ctx, b);
   });
 
   app.patch<{ Params: { id: string }; Body: { content?: string; note?: string | null } }>(
     "/api/units/:id",
-    async (req) => updateUnit(ctx, Number(req.params.id), req.body ?? {}),
+    async (req) => updateUnit(req.ctx, Number(req.params.id), req.body ?? {}),
   );
 
   app.delete<{ Params: { id: string } }>("/api/units/:id", async (req) => {
-    deleteUnit(ctx, Number(req.params.id));
+    deleteUnit(req.ctx, Number(req.params.id));
     return { ok: true };
   });
 
@@ -86,47 +92,58 @@ export function registerKnowledgeRoutes(app: FastifyInstance, ctx: Ctx, provider
   app.post<{ Body: { fromId: number; toId: number; relation: Relation } }>("/api/unit-links", async (req) => {
     const b = req.body;
     if (!b?.fromId || !b?.toId || !b?.relation) throw badRequest("fromId, toId and relation are required");
-    return { id: createLink(ctx, b.fromId, b.toId, b.relation) };
+    return { id: createLink(req.ctx, b.fromId, b.toId, b.relation) };
   });
 
   app.delete<{ Params: { id: string } }>("/api/unit-links/:id", async (req) => {
-    deleteLink(ctx, Number(req.params.id));
+    deleteLink(req.ctx, Number(req.params.id));
     return { ok: true };
   });
 
   // ---- distill: proposes only, never writes ----
-  app.post<{ Body: { docId: number; page: number; selectionText: string; hint?: number } }>(
+  app.post<{ Body: SelectionBody }>(
     "/api/distill",
     async (req) => {
       const b = req.body;
       if (!b?.docId || !b?.page || !b?.selectionText) throw badRequest("docId, page and selectionText are required");
-      return distillSelection(ctx, providerOverride ?? providerFromSettings(ctx), b);
+      return distillSelection(req.ctx, providerOverride ?? providerFromSettings(req.ctx), b);
     },
   );
 
   // Dismissals are counted quietly (accepts/edits are counted when the unit is created).
   app.post<{ Body: { unitType: string; docId?: number } }>("/api/candidate-events", async (req) => {
-    recordCandidateEvent(ctx, "dismiss", req.body?.unitType ?? "unknown", req.body?.docId ?? null);
+    recordCandidateEvent(req.ctx, "dismiss", req.body?.unitType ?? "unknown", req.body?.docId ?? null);
     return { ok: true };
   });
 
   // ---- settings ----
-  app.get("/api/settings", async (): Promise<SettingsDto> => {
+  const settingsDto = (ctx: Ctx): SettingsDto => {
     const ai = readAiSettings(ctx.cfg);
-    return { ai: { baseUrl: ai.baseUrl, model: ai.model, apiKeySet: !!ai.apiKey } };
-  });
+    return { ai: { baseUrl: ai.baseUrl, model: ai.model, apiKeySet: !!ai.apiKey }, ocr: readOcrSettings(ctx.cfg) };
+  };
+  app.get("/api/settings", async (req): Promise<SettingsDto> => settingsDto(req.ctx));
 
-  app.put<{ Body: { ai?: { baseUrl?: string; model?: string; apiKey?: string } } }>("/api/settings", async (req) => {
-    writeAiSettings(ctx.cfg, req.body?.ai ?? {});
-    const ai = readAiSettings(ctx.cfg);
-    return { ai: { baseUrl: ai.baseUrl, model: ai.model, apiKeySet: !!ai.apiKey } } satisfies SettingsDto;
-  });
+  app.put<{ Body: { ai?: { baseUrl?: string; model?: string; apiKey?: string }; ocr?: { enabled?: boolean; language?: string } } }>(
+    "/api/settings",
+    async (req) => {
+      if (req.body?.ai) writeAiSettings(req.ctx.cfg, req.body.ai);
+      if (req.body?.ocr) {
+        try {
+          writeOcrSettings(req.ctx.cfg, req.body.ocr);
+        } catch (e) {
+          throw badRequest((e as Error).message);
+        }
+        void req.ctx.ocrJob.retry(); // switching OCR on (or changing the language) picks up waiting pages
+      }
+      return settingsDto(req.ctx);
+    },
+  );
 
   // ---- export (portable, model-independent) ----
-  app.get("/api/export.json", async () => buildExport(ctx));
-  app.get("/api/export.md", async (_req, reply) => {
+  app.get("/api/export.json", async (req) => buildExport(req.ctx));
+  app.get("/api/export.md", async (req, reply) => {
     reply.type("text/markdown; charset=utf-8");
-    return buildMarkdown(ctx);
+    return buildMarkdown(req.ctx);
   });
-  app.post("/api/export", async () => exportToDir(ctx));
+  app.post("/api/export", async (req) => exportToDir(req.ctx));
 }

@@ -411,7 +411,7 @@ describe("export and backup (model independent)", () => {
       expect(() => restoreBackup(dest, target)).toThrow(/already contains/);
       restoreBackup(dest, target, { force: true });
 
-      const restored = createContext(loadConfig({ libraryDir: target, embeddings: "off" }), { embedder: null });
+      const restored = createContext(loadConfig({ libraryDir: target, embeddings: "off" }), { embedder: null, ocr: null });
       const units = restored.db.prepare("SELECT content FROM units").all() as { content: string }[];
       expect(units.map((u) => u.content)).toEqual([SCARCE]);
       expect(existsSync(join(target, "originals"))).toBe(true);

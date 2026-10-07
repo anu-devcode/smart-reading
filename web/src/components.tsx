@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useState, type ReactNode } from "react";
 import type { DocumentDto, UnitDto, UnitType, Why } from "../../shared/types";
+import { citationText, pagesLabel } from "../../shared/types";
 import { api } from "./api";
 import { href } from "./router";
 
@@ -82,13 +83,91 @@ export function WhyLine({ why }: { why: Why }) {
 export function SourceLine({ unit }: { unit: UnitDto }) {
   return (
     <span className="source">
-      {unit.docTitle}, p. {unit.page}
+      {unit.docTitle}, {pagesLabel(unit.page, unit.endPage)}
     </span>
   );
 }
 
-export function Empty({ children }: { children: ReactNode }) {
-  return <div className="empty">{children}</div>;
+/** Reuse: copy the unit with its citation line, ready to paste anywhere. */
+export function CopyCitation({ unit }: { unit: UnitDto }) {
+  const toast = useToast();
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(citationText(unit));
+      toast("Copied with its source.");
+    } catch {
+      toast("Could not copy. Your browser blocked access to the clipboard.", "error");
+    }
+  };
+  return (
+    <button className="small" onClick={() => void copy()} title={citationText(unit)}>
+      Copy with citation
+    </button>
+  );
+}
+
+export function Empty({ children, title, action }: { children: ReactNode; title?: string; action?: ReactNode }) {
+  return (
+    <div className="empty">
+      {title && <p className="empty-title">{title}</p>}
+      <div>{children}</div>
+      {action && <div className="empty-action">{action}</div>}
+    </div>
+  );
+}
+
+export const READING_LABEL: Record<DocumentDto["readingStatus"], string> = {
+  unread: "Unread",
+  reading: "Reading",
+  finished: "Finished",
+  revisit: "To revisit",
+};
+
+/** The same heading on every page: where you are, what this place is for, and its main actions. */
+export function PageHeader({ eyebrow, title, children, actions }: { eyebrow: string; title: ReactNode; children?: ReactNode; actions?: ReactNode }) {
+  return (
+    <header className="page-head">
+      <div>
+        <p className="page-eyebrow">{eyebrow}</p>
+        <h1>{title}</h1>
+        {children && <p className="page-desc">{children}</p>}
+      </div>
+      {actions && <div className="page-actions">{actions}</div>}
+    </header>
+  );
+}
+
+/** Placeholder rows while something loads, announced to screen readers. */
+export function Loading({ label = "Loading…", rows = 3 }: { label?: string; rows?: number }) {
+  return (
+    <div className="loading" role="status" aria-live="polite">
+      <span className="sr-only">{label}</span>
+      {Array.from({ length: rows }, (_, i) => (
+        <div key={i} className="skeleton" aria-hidden="true">
+          <span className="sk-line w40" />
+          <span className="sk-line w90" />
+          <span className="sk-line w70" />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+export function ErrorState({ message, onRetry, children }: { message: string; onRetry?: () => void; children?: ReactNode }) {
+  return (
+    <div className="error-state" role="alert">
+      <p className="empty-title">Something went wrong</p>
+      <p>{message}</p>
+      <div className="row">
+        {onRetry && (
+          <button className="primary" onClick={onRetry}>
+            Try again
+          </button>
+        )}
+        {children}
+      </div>
+    </div>
+  );
 }
 
 // ---------- same-idea suggestion (offered once, at save time) ----------
@@ -117,7 +196,7 @@ export function SuggestionBar({ s, onDone }: { s: Suggestion; onDone: () => void
         <div className="suggestion-text">
           <TypeBadge type={s.other.type} /> {s.other.content}{" "}
           <a href={href(`knowledge/${s.other.id}`)} className="muted">
-            ({s.other.docTitle}, p. {s.other.page})
+            ({s.other.docTitle}, {pagesLabel(s.other.page, s.other.endPage)})
           </a>
         </div>
       </div>

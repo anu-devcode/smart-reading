@@ -1,9 +1,9 @@
-import type { Ctx } from "../context.ts";
+﻿import type { Ctx } from "../context.ts";
 import type { Candidate, DistillResponse } from "../../shared/types.ts";
 import { readAiSettings, type AiSettings } from "../config.ts";
-import { compactOf, findSpan, paragraphBounds } from "../text/anchor.ts";
+import { compactOf, findSpan } from "../text/anchor.ts";
 import { HttpError } from "../errors.ts";
-import { resolveSelection } from "./highlights.ts";
+import { paragraphAround, resolveSpan, type SelectionInput } from "./highlights.ts";
 
 // AI proposes, the source grounds, the user decides.
 // Nothing here writes to the library: it only returns candidates for the user to accept, edit or dismiss.
@@ -121,14 +121,13 @@ export function verifyCandidates(raw: RawCandidate[], paragraph: string): { cand
 export async function distillSelection(
   ctx: Ctx,
   provider: DistillProvider | null,
-  input: { docId: number; page: number; selectionText: string; hint?: number },
+  input: SelectionInput,
 ): Promise<DistillResponse> {
   if (!provider) {
     throw new HttpError(400, "No AI provider is configured. Add one in Settings to use Distill. Everything else works without it.");
   }
-  const { pageText, span } = resolveSelection(ctx, input.docId, input.page, input.selectionText, input.hint);
-  const b = paragraphBounds(pageText, span.start, span.end);
-  const paragraph = pageText.slice(b.start, b.end);
+  const span = resolveSpan(ctx, input);
+  const paragraph = paragraphAround(ctx, input.docId, span).text;
   const doc = ctx.db.prepare("SELECT title FROM documents WHERE id = ?").get(input.docId) as { title: string };
 
   let raw: RawCandidate[];
@@ -138,7 +137,7 @@ export async function distillSelection(
     throw new HttpError(502, `The AI provider failed: ${(e as Error).message}`);
   }
   const { candidates, dropped } = verifyCandidates(raw, paragraph);
-  return { candidates, dropped, anchor: { page: input.page, start: span.start, end: span.end, text: span.text } };
+  return { candidates, dropped, anchor: { page: span.page, endPage: span.endPage, start: span.start, end: span.end, text: span.text } };
 }
 
 export function providerFromSettings(ctx: Ctx): DistillProvider | null {

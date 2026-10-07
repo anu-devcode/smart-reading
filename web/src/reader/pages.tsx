@@ -4,6 +4,7 @@ import type { PDFDocumentProxy } from "pdfjs-dist";
 import workerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 import "pdfjs-dist/web/pdf_viewer.css";
 import { compactOf } from "../../../shared/compact";
+import type { OcrWordDto } from "../../../shared/types";
 import { buildTextIndex, locateRange, rectsRelativeTo, type TextIndex } from "./locate";
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = workerUrl;
@@ -94,14 +95,70 @@ function Overlay({ placed, onMarkClick }: { placed: Placed[]; onMarkClick?: (key
   );
 }
 
+// ---------------- OCR text layer ----------------
+
+/**
+ * A page that was read from an image has no text of its own, so the invisible, selectable text layer is built
+ * from the recognised words instead: one span per word, placed on the word's box. The text between the spans
+ * (spaces, line breaks) is the page text itself, so what you select is exactly what was stored.
+ */
+function buildOcrLayer(root: HTMLElement, pageText: string, words: OcrWordDto[], w: number, h: number) {
+  root.replaceChildren();
+  // words on one line share a top and a height, so selections look like lines and not like a ragged edge
+  const lines: OcrWordDto[][] = [];
+  let prevEnd = 0;
+  for (const word of words) {
+    if (!lines.length || /\n/.test(pageText.slice(prevEnd, word.s))) lines.push([]);
+    lines[lines.length - 1].push(word);
+    prevEnd = word.e;
+  }
+  const spans: { el: HTMLSpanElement; width: number }[] = [];
+  prevEnd = 0;
+  for (const line of lines) {
+    const top = Math.min(...line.map((x) => x.y0)) * h;
+    const height = (Math.max(...line.map((x) => x.y1)) - Math.min(...line.map((x) => x.y0))) * h;
+    line.forEach((word, i) => {
+      if (word.s > prevEnd) root.append(document.createTextNode(pageText.slice(prevEnd, word.s)));
+      const next = line[i + 1];
+      // the space after a word belongs to the word's box, so a highlight runs on across the line
+      const gap = next ? pageText.slice(word.e, next.s) : "";
+      const joinGap = next && /^ +$/.test(gap);
+      const el = document.createElement("span");
+      el.textContent = pageText.slice(word.s, joinGap ? next.s : word.e);
+      el.style.left = `${word.x0 * w}px`;
+      el.style.top = `${top}px`;
+      el.style.fontSize = `${Math.max(4, height * 0.8)}px`;
+      el.style.lineHeight = `${height}px`;
+      el.style.fontFamily = "sans-serif";
+      root.append(el);
+      spans.push({ el, width: ((joinGap ? next.x0 : word.x1) - word.x0) * w });
+      prevEnd = joinGap ? next.s : word.e;
+    });
+  }
+  // stretch each word to its box so the selection follows the printed word
+  for (const s of spans) {
+    const natural = s.el.offsetWidth; // layout width, before the transform
+    if (natural > 0 && s.width > 0) s.el.style.transform = `scaleX(${s.width / natural})`;
+  }
+}
+
 // ---------------- PDF page ----------------
 
 export function PdfPage({
   pdf,
   scale,
   est,
+  ocr,
+  loadOcrWords,
   ...c
-}: CommonProps & { pdf: PDFDocumentProxy; scale: number; est: { w: number; h: number } }) {
+}: CommonProps & {
+  pdf: PDFDocumentProxy;
+  scale: number;
+  est: { w: number; h: number };
+  /** the page has no text of its own; its text was read from the image */
+  ocr?: boolean;
+  loadOcrWords?: () => Promise<OcrWordDto[]>;
+}) {
   const wrap = useRef<HTMLDivElement>(null);
   const canvas = useRef<HTMLCanvasElement>(null);
   const textDiv = useRef<HTMLDivElement>(null);
@@ -161,14 +218,21 @@ export function PdfPage({
       td.replaceChildren();
       td.style.width = `${viewport.width}px`;
       td.style.height = `${viewport.height}px`;
-      const tl = new pdfjsLib.TextLayer({
-        textContentSource: page.streamTextContent(),
-        container: td,
-        viewport,
-      });
-      textLayer = tl;
       try {
-        await Promise.all([task!.promise, tl.render()]);
+        if (ocr && loadOcrWords) {
+          const words = await loadOcrWords();
+          await task!.promise;
+          if (cancelled) return;
+          buildOcrLayer(td, c.pageText, words, viewport.width, viewport.height);
+        } else {
+          const tl = new pdfjsLib.TextLayer({
+            textContentSource: page.streamTextContent(),
+            container: td,
+            viewport,
+          });
+          textLayer = tl;
+          await Promise.all([task!.promise, tl.render()]);
+        }
       } catch (e) {
         if ((e as { name?: string }).name === "RenderingCancelledException") return;
         if (!cancelled) console.warn("page render failed", c.num, e);
@@ -182,7 +246,7 @@ export function PdfPage({
       task?.cancel();
       textLayer?.cancel();
     };
-  }, [visible, pdf, c.num, scale]);
+  }, [visible, pdf, c.num, scale, ocr, c.pageText]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // handle for the reader (selection hints, scrolling)
   useEffect(() => {
@@ -202,8 +266,13 @@ export function PdfPage({
       style={{ width: w, height: h, ["--total-scale-factor" as string]: scale, ["--scale-factor" as string]: scale }}
     >
       <canvas ref={canvas} />
-      <div ref={textDiv} className="textLayer" />
+      <div ref={textDiv} className={ocr ? "textLayer ocr-layer" : "textLayer"} />
       <Overlay placed={placed} onMarkClick={c.onMarkClick} />
+      {ocr && (
+        <div className="ocr-badge" title="This page is a picture. Its text was read with OCR and may contain mistakes.">
+          OCR
+        </div>
+      )}
       {!ready && <div className="page-placeholder">Page {c.num}</div>}
     </div>
   );

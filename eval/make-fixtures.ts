@@ -10,7 +10,7 @@ export const FIXTURE_DIR = join(here, "fixtures");
 export function makeFixtures(dir: string = FIXTURE_DIR): string {
   mkdirSync(dir, { recursive: true });
   for (const f of PDF_FIXTURES) {
-    writeFileSync(join(dir, f.file), buildPdf(f.pages, f.title));
+    writeFileSync(join(dir, f.file), buildPdf(f.pages, f.title, f.outline));
   }
   for (const t of TEXT_FIXTURES) {
     writeFileSync(join(dir, t.file), t.content, "utf8");

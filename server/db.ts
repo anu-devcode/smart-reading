@@ -1,10 +1,11 @@
 import Database from "better-sqlite3";
+import { reindexPassages } from "./text/dehyphen.ts";
 
 export type DB = Database.Database;
 
 const TOKENIZER = "tokenize='porter unicode61 remove_diacritics 2'";
 
-const SCHEMA_V1 = `
+export const SCHEMA_V1 = `
 CREATE TABLE documents (
   id INTEGER PRIMARY KEY,
   title TEXT NOT NULL,
@@ -117,13 +118,44 @@ CREATE TABLE collections (
 );
 `;
 
-const MIGRATIONS: string[] = [SCHEMA_V1];
+// v2: the passage index gets an `alt` column holding the other reading of line-end hyphenated words.
+const SCHEMA_V2 = `
+DROP TABLE passages_fts;
+CREATE VIRTUAL TABLE passages_fts USING fts5(body, alt, ${TOKENIZER});
+`;
+
+// v3: a highlight or unit may end on a later page than it starts (NULL = same page).
+const SCHEMA_V3 = `
+ALTER TABLE highlights ADD COLUMN end_page INTEGER;
+ALTER TABLE units ADD COLUMN end_page INTEGER;
+`;
+
+// OCR: what was read from page images is kept apart from the PDF's own text, so re-processing a document
+// (e.g. after an extractor improvement) never throws the recognised text away or runs the OCR again.
+const SCHEMA_V4 = `
+ALTER TABLE pages ADD COLUMN ocr INTEGER NOT NULL DEFAULT 0;
+CREATE TABLE ocr_pages (
+  doc_id INTEGER NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+  page INTEGER NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('ok','rejected')),
+  reason TEXT,
+  text TEXT NOT NULL DEFAULT '',
+  words TEXT NOT NULL DEFAULT '[]',
+  confidence REAL,
+  lang TEXT NOT NULL,
+  PRIMARY KEY (doc_id, page)
+);
+`;
+
+const MIGRATIONS: string[] = [SCHEMA_V1, SCHEMA_V2, SCHEMA_V3, SCHEMA_V4];
+export const SCHEMA_VERSION = MIGRATIONS.length;
 
 export function openDb(file: string): DB {
   const db = new Database(file);
   db.pragma("journal_mode = WAL");
   db.pragma("foreign_keys = ON");
   const current = db.pragma("user_version", { simple: true }) as number;
+  const needsPassageReindex = current > 0 && current < 2;
   for (let v = current; v < MIGRATIONS.length; v++) {
     db.exec("BEGIN");
     try {
@@ -135,5 +167,6 @@ export function openDb(file: string): DB {
       throw e;
     }
   }
+  if (needsPassageReindex) reindexPassages(db);
   return db;
 }

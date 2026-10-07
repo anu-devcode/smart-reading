@@ -2,6 +2,7 @@ import type { DB } from "./db.ts";
 import { openDb } from "./db.ts";
 import type { Config } from "./config.ts";
 import { EmbedJob, TransformersEmbedder, VectorIndex, type Embedder } from "./search/embeddings.ts";
+import { OcrJob, TesseractEngine, type OcrEngine } from "./ingest/ocr.ts";
 
 export interface Ctx {
   cfg: Config;
@@ -9,11 +10,12 @@ export interface Ctx {
   embedder: Embedder | null;
   vectors: { passage: VectorIndex; unit: VectorIndex };
   embedJob: EmbedJob;
+  ocrJob: OcrJob;
   /** in-flight background document processing, so tests and shutdown can await it */
   inflight: Set<Promise<unknown>>;
 }
 
-export function createContext(cfg: Config, opts: { embedder?: Embedder | null } = {}): Ctx {
+export function createContext(cfg: Config, opts: { embedder?: Embedder | null; ocr?: OcrEngine | null } = {}): Ctx {
   const db = openDb(cfg.dbFile);
   const embedder: Embedder | null =
     opts.embedder !== undefined
@@ -26,10 +28,17 @@ export function createContext(cfg: Config, opts: { embedder?: Embedder | null } 
     unit: new VectorIndex(db, "unit", cfg.embeddingModel),
   };
   const embedJob = new EmbedJob(db, cfg, embedder, vectors);
-  return { cfg, db, embedder, vectors, embedJob, inflight: new Set() };
+  const engine: OcrEngine | null = opts.ocr !== undefined ? opts.ocr : cfg.ocr === "on" ? new TesseractEngine(cfg.modelsDir) : null;
+  const ctx: Ctx = { cfg, db, embedder, vectors, embedJob, ocrJob: undefined as never, inflight: new Set() };
+  ctx.ocrJob = new OcrJob(() => ctx, engine);
+  return ctx;
 }
 
 export async function idle(ctx: Ctx): Promise<void> {
-  while (ctx.inflight.size) await Promise.allSettled([...ctx.inflight]);
-  await ctx.embedJob.kick();
+  for (;;) {
+    while (ctx.inflight.size) await Promise.allSettled([...ctx.inflight]);
+    await ctx.ocrJob.kick();
+    await ctx.embedJob.kick();
+    if (!ctx.inflight.size) return;
+  }
 }

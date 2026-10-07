@@ -4,7 +4,31 @@ export type FixtureDoc = {
   file: string;
   title: string;
   pages: PageSpec[];
+  /** with no OCR available */
   expectStatus: "ready" | "partial" | "failed";
+  /** with OCR switched on, when that changes the outcome */
+  expectStatusWithOcr?: "ready" | "partial" | "failed";
+  /** bookmarks (the PDF's own table of contents) */
+  outline?: { title: string; page: number }[];
+};
+
+/** What the scanned fixtures show, so the acceptance run can check what OCR reads against it. */
+export const SCANNED_TEXT: Record<string, string[][]> = {
+  "scanned-memo.pdf": [
+    [],
+    [
+      "The lighthouse keeper recorded the height of the tide every evening, because the harbour pilots relied on those tables when the fog came in.",
+      "Fog signals were sounded whenever visibility dropped below half a mile, and the logbook shows that this happened on thirty nights in the winter of that year.",
+    ],
+  ],
+  "scanned-notes.pdf": [
+    [
+      "A beekeeper learns early that a colony is not a collection of insects but a single organism. The queen, the workers and the drones each carry a task that the hive as a whole depends upon.",
+    ],
+    [
+      "In late summer the beekeeper removes the honey supers and leaves enough stores for the winter. Taking too much is the most common mistake made by beginners.",
+    ],
+  ],
 };
 
 const P = (...paragraphs: string[]): PageSpec => ({ paragraphs });
@@ -34,6 +58,11 @@ export const PDF_FIXTURES: FixtureDoc[] = [
     file: "learning-that-lasts.pdf",
     title: "Learning That Lasts",
     expectStatus: "ready",
+    outline: [
+      { title: "The forgetting curve", page: 1 },
+      { title: "Spaced repetition", page: 2 },
+      { title: "Retrieval practice", page: 3 },
+    ],
     pages: [
       P(
         "Memory fades on a predictable curve. Soon after first meeting a fact, most of it is lost, and the loss slows as time passes. The shape of this decline was first measured with lists of nonsense syllables and has been reproduced many times since.",
@@ -86,6 +115,45 @@ export const PDF_FIXTURES: FixtureDoc[] = [
     ],
   },
   {
+    // Two-column layout, content stream written row by row. Page 1 has a full-width heading and a sentence
+    // that runs from the bottom of the left column into the top of the right. Page 3 is a single-column control.
+    file: "tide-pools.pdf",
+    title: "Field Notes on Tide Pools",
+    expectStatus: "ready",
+    pages: [
+      {
+        heading: "Field Notes on Tide Pools",
+        columns: [
+          [
+            "Tide pools form where rock basins hold seawater after the sea has gone out. The water warms, thins and salts up over a few hours, so every animal living there has to tolerate swings that would kill most sea creatures.",
+            "Zonation is the first thing a visitor notices. The upper pools see sun and rain, the middle ones are wet most days, and the lowest are covered by every tide. Each band has its own residents, and the pools at the lowest edge are home to",
+          ],
+          [
+            "anemones, hermit crabs and small fish that never leave. Barnacles close their shells to wait out the dry hours.",
+            "Predators arrive with the tide. Sea stars pry open mussels slowly, with steady suction, and a single star can clear a whole rock face over a season. This pressure keeps the mussels from taking over.",
+          ],
+        ],
+      },
+      {
+        columns: [
+          [
+            "Observation works best at the lowest tide of the month, when the outer pools are exposed for the longest stretch.",
+            "Move slowly and keep your shadow off the water, because small animals retreat from sudden darkness.",
+          ],
+          [
+            "Keep a notebook with the time, the tide height and the weather, so that visits can be compared across seasons.",
+            "Return every rock to the position in which it was found, since the animals underneath depend on it for shade.",
+          ],
+        ],
+      },
+      P(
+        "Summary",
+        "Short notes.",
+        "A reader who visits the same pools through the year learns more from the changes than from any single visit. The pattern of arrivals and departures is the real subject of the notes above.",
+      ),
+    ],
+  },
+  {
     // Page 2 has no extractable text (simulates a scanned page): expect PARTIAL.
     file: "partly-scanned.pdf",
     title: "Partly Scanned Report",
@@ -106,6 +174,25 @@ export const PDF_FIXTURES: FixtureDoc[] = [
     title: "Fully Scanned Document",
     expectStatus: "failed",
     pages: [DRAWING, DRAWING],
+  },
+  {
+    // A typed page and a scanned page (a picture of text): PARTIAL without OCR, READY once the scan is read.
+    file: "scanned-memo.pdf",
+    title: "Scanned Memo",
+    expectStatus: "partial",
+    expectStatusWithOcr: "ready",
+    pages: [
+      P("Field memo. This first page is typed and has a real text layer, so it never needs to be read as an image."),
+      { scanned: SCANNED_TEXT["scanned-memo.pdf"][1] },
+    ],
+  },
+  {
+    // Every page is a picture of text: FAILED without OCR, READY once it is read.
+    file: "scanned-notes.pdf",
+    title: "Scanned Notes",
+    expectStatus: "failed",
+    expectStatusWithOcr: "ready",
+    pages: SCANNED_TEXT["scanned-notes.pdf"].map((paras) => ({ scanned: paras })),
   },
 ];
 
@@ -159,6 +246,63 @@ export const EVAL_QUERIES: EvalQuery[] = [
     expectFile: "learning-that-lasts.pdf",
     expectPage: 2,
     topK: 1,
+  },
+  {
+    id: "column-sentence-continues",
+    kind: "phrase",
+    query: '"home to anemones"',
+    expectFile: "tide-pools.pdf",
+    expectPage: 1,
+    topK: 1,
+  },
+  {
+    id: "column-wrapped-lines",
+    kind: "phrase",
+    query: '"swings that would kill most sea creatures"',
+    expectFile: "tide-pools.pdf",
+    expectPage: 1,
+    topK: 1,
+  },
+  {
+    id: "column-right-wrapped",
+    kind: "phrase",
+    query: '"close their shells to wait out the dry hours"',
+    expectFile: "tide-pools.pdf",
+    expectPage: 1,
+    topK: 1,
+  },
+  {
+    id: "column-second-page",
+    kind: "phrase",
+    query: '"lowest tide of the month"',
+    expectFile: "tide-pools.pdf",
+    expectPage: 2,
+    topK: 1,
+  },
+  {
+    // these two pages are pictures: the words below only exist because OCR read them
+    id: "ocr-phrase-memo",
+    kind: "phrase",
+    query: '"harbour pilots relied on those tables"',
+    expectFile: "scanned-memo.pdf",
+    expectPage: 2,
+    topK: 1,
+  },
+  {
+    id: "ocr-phrase-notes",
+    kind: "phrase",
+    query: '"removes the honey supers"',
+    expectFile: "scanned-notes.pdf",
+    expectPage: 2,
+    topK: 1,
+  },
+  {
+    id: "ocr-meaning-notes",
+    kind: "meaning",
+    query: "beginners often harvest too much honey and leave the bees short of food for winter",
+    expectFile: "scanned-notes.pdf",
+    expectPage: 2,
+    topK: 3,
   },
   {
     id: "boolean-not",

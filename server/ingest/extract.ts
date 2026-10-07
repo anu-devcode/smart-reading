@@ -1,9 +1,12 @@
-import type { DocKind } from "../../shared/types.ts";
+﻿import type { DocKind } from "../../shared/types.ts";
+import { itemsToPageText, type PdfItem } from "./layout.ts";
 
 export interface ExtractedPage {
   page: number;
   text: string;
   status: "ok" | "empty" | "garbled";
+  /** set when the text was read from the page image with OCR rather than extracted */
+  ocr?: boolean;
 }
 
 export interface Extracted {
@@ -24,63 +27,6 @@ export function classifyPageText(text: string): "ok" | "empty" | "garbled" {
 }
 
 // ---------- PDF ----------
-
-type PdfItem = { str: string; transform: number[]; width: number; height: number; hasEOL?: boolean };
-
-/**
- * Reconstruct reading-order text from pdf.js items.
- * Lines are grouped by baseline; paragraph breaks are detected from unusually large vertical gaps.
- * Limitation (documented): multi-column layouts are read as one column.
- */
-export function itemsToPageText(items: PdfItem[]): string {
-  const real = items.filter((it) => typeof it.str === "string" && it.str.length > 0);
-  if (real.length === 0) return "";
-
-  type Line = { y: number; h: number; items: PdfItem[] };
-  const lines: Line[] = [];
-  const sorted = [...real].sort((a, b) => b.transform[5] - a.transform[5] || a.transform[4] - b.transform[4]);
-  for (const it of sorted) {
-    const y = it.transform[5];
-    const h = Math.abs(it.height) || Math.abs(it.transform[3]) || 10;
-    const line = lines.find((l) => Math.abs(l.y - y) <= Math.max(2, l.h * 0.4));
-    if (line) line.items.push(it);
-    else lines.push({ y, h, items: [it] });
-  }
-  lines.sort((a, b) => b.y - a.y);
-  for (const l of lines) l.items.sort((a, b) => a.transform[4] - b.transform[4]);
-
-  const gaps: number[] = [];
-  for (let i = 1; i < lines.length; i++) gaps.push(lines[i - 1].y - lines[i].y);
-  const sortedGaps = [...gaps].sort((a, b) => a - b);
-  const median = sortedGaps.length ? sortedGaps[Math.floor(sortedGaps.length / 2)] : 0;
-
-  const lineText = (l: Line) => {
-    let s = "";
-    let prevEnd: number | null = null;
-    for (const it of l.items) {
-      const x = it.transform[4];
-      if (prevEnd !== null && s && !s.endsWith(" ") && !it.str.startsWith(" ")) {
-        if (x - prevEnd > l.h * 0.15) s += " ";
-      }
-      s += it.str;
-      prevEnd = x + (it.width || 0);
-    }
-    return s.replace(/\s+/g, " ").trim();
-  };
-
-  let out = "";
-  lines.forEach((l, i) => {
-    const t = lineText(l);
-    if (!t) return;
-    if (i === 0 || !out) {
-      out += t;
-      return;
-    }
-    const gap = lines[i - 1].y - l.y;
-    out += median > 0 && gap > median * 1.45 ? "\n\n" + t : " " + t;
-  });
-  return out.trim();
-}
 
 function pdfYear(raw: unknown): number | null {
   if (typeof raw !== "string") return null;

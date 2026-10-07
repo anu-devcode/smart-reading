@@ -14,7 +14,7 @@ import { search } from "../server/search/search.ts";
 import { createUnit } from "../server/knowledge/units.ts";
 import { getPages, getDocument } from "../server/library.ts";
 import { makeFixtures } from "./make-fixtures.ts";
-import { EVAL_QUERIES, PDF_FIXTURES, TEXT_FIXTURES } from "./fixtures.ts";
+import { EVAL_QUERIES, PDF_FIXTURES, SCANNED_TEXT, TEXT_FIXTURES } from "./fixtures.ts";
 import type { SearchResponse } from "../shared/types.ts";
 
 const results: { gate: string; ok: boolean; detail: string }[] = [];
@@ -48,10 +48,48 @@ async function main() {
     // ---------- gate: honest processing status ----------
     for (const f of PDF_FIXTURES) {
       const doc = getDocument(ctx, idByFile.get(f.file)!)!;
-      gate(`status ${f.file} is ${f.expectStatus}`, doc.processingStatus === f.expectStatus, `got ${doc.processingStatus}${doc.failureNotes.length ? ` (${doc.failureNotes.join("; ")})` : ""}`);
-      if (f.expectStatus !== "ready") gate(`status ${f.file} explains why`, doc.failureNotes.length > 0);
+      const expected = f.expectStatusWithOcr ?? f.expectStatus; // this run has OCR switched on
+      gate(`status ${f.file} is ${expected}`, doc.processingStatus === expected, `got ${doc.processingStatus}${doc.failureNotes.length ? ` (${doc.failureNotes.join("; ")})` : ""}`);
+      if (expected !== "ready") gate(`status ${f.file} explains why`, doc.failureNotes.length > 0);
     }
     gate("no document is left embedding-pending", [...idByFile.values()].every((id) => !getDocument(ctx, id)!.embeddingPending));
+    gate("no document is left waiting for OCR", [...idByFile.values()].every((id) => getDocument(ctx, id)!.ocrPending === 0));
+
+    // ---------- gates: OCR (the real engine) ----------
+    {
+      const words = (s: string) => s.toLowerCase().match(/[a-z]+/g) ?? [];
+      for (const [file, pagesText] of Object.entries(SCANNED_TEXT)) {
+        const id = idByFile.get(file)!;
+        const pages = getPages(ctx, id);
+        pagesText.forEach((paras, i) => {
+          if (!paras.length) {
+            gate(`ocr ${file} p.${i + 1}: a typed page is not sent to OCR`, pages[i].ocr === false);
+            return;
+          }
+          const got = new Set(words(pages[i].text));
+          const want = words(paras.join(" "));
+          const hit = want.filter((w) => got.has(w)).length;
+          gate(`ocr ${file} p.${i + 1}: read as OCR text`, pages[i].status === "ok" && pages[i].ocr === true);
+          gate(`ocr ${file} p.${i + 1}: at least 95% of the words are read correctly`, hit / want.length >= 0.95, `${hit}/${want.length} words`);
+        });
+        const notes = getDocument(ctx, id)!.failureNotes.join(" ");
+        gate(`ocr ${file}: the document says its text was read with OCR`, /read from the page image with OCR/.test(notes));
+      }
+      for (const file of ["fully-scanned.pdf", "partly-scanned.pdf"]) {
+        const id = idByFile.get(file)!;
+        const empties = getPages(ctx, id).filter((p) => p.status === "empty");
+        const reasons = ctx.db.prepare("SELECT reason FROM ocr_pages WHERE doc_id = ? AND status = 'rejected'").all(id) as { reason: string }[];
+        gate(`ocr ${file}: pages with nothing to read are not guessed at`, empties.length > 0 && empties.every((p) => p.text === "" && !p.ocr) && reasons.length === empties.length);
+        gate(`ocr ${file}: says why OCR gave up`, /OCR could not read/.test(getDocument(ctx, id)!.failureNotes.join(" ")));
+      }
+      const real = getPages(ctx, idByFile.get("attention-budget.pdf")!);
+      gate("ocr: documents with real text are not read as images", real.every((p) => !p.ocr));
+      // a quote on an OCR page is an exact slice of that page
+      const memo = idByFile.get("scanned-memo.pdf")!;
+      const { unit } = await createUnit(ctx, { type: "quote", docId: memo, page: 2, selectionText: "harbour pilots relied on those tables" });
+      const memoText = getPages(ctx, memo)[1].text;
+      gate("ocr: a kept quote is an exact substring of the OCR page", memoText.slice(unit.start, unit.end) === unit.content, JSON.stringify(unit.content));
+    }
 
     // ---------- gate: every passage is an exact substring of its page ----------
     {
@@ -126,6 +164,7 @@ async function main() {
       console.log(`\ninfo: for the meaning query "${q}", ${lexicalOnly ? "some" : "no"} hits came from keywords alone.`);
     }
   } finally {
+    await ctx.ocrJob.close().catch(() => undefined);
     try { ctx.db.close(); } catch { /* ignore */ }
     rmSync(dir, { recursive: true, force: true });
   }

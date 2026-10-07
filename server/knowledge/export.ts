@@ -1,6 +1,7 @@
-import { mkdirSync, writeFileSync } from "node:fs";
+﻿import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Ctx } from "../context.ts";
+import { pagesLabel } from "../../shared/types.ts";
 
 // A portable snapshot of everything the USER owns: sources list, highlights, accepted knowledge,
 // relations, and provenance. Embeddings are deliberately excluded (derived, rebuildable).
@@ -23,6 +24,7 @@ export interface ExportBundle {
   highlights: {
     documentHash: string;
     page: number;
+    endPage: number;
     start: number;
     end: number;
     text: string;
@@ -40,6 +42,7 @@ export interface ExportBundle {
       documentHash: string;
       documentTitle: string;
       page: number;
+      endPage: number;
       start: number;
       end: number;
       text: string;
@@ -71,6 +74,7 @@ export function buildExport(ctx: Ctx): ExportBundle {
     highlights: (ctx.db.prepare("SELECT * FROM highlights ORDER BY doc_id, page, start").all() as any[]).map((h) => ({
       documentHash: hashOf.get(h.doc_id)!,
       page: h.page,
+      endPage: h.end_page ?? h.page,
       start: h.start,
       end: h.end,
       text: h.text,
@@ -88,6 +92,7 @@ export function buildExport(ctx: Ctx): ExportBundle {
         documentHash: hashOf.get(u.doc_id)!,
         documentTitle: titleOf.get(u.doc_id)!,
         page: u.page,
+        endPage: u.end_page ?? u.page,
         start: u.start,
         end: u.end,
         text: u.source_text,
@@ -122,7 +127,7 @@ export function buildMarkdown(ctx: Ctx): string {
       lines.push(`- **${LABEL[u.type] ?? u.type}**: ${u.content.replace(/\n+/g, " ")}`);
       if (u.type !== "quote") lines.push(`  > ${u.source.text.replace(/\n+/g, " ")}`);
       if (u.note) lines.push(`  - Note: ${u.note.replace(/\n+/g, " ")}`);
-      lines.push(`  - Source: ${d.title}, p. ${u.source.page}`);
+      lines.push(`  - Source: ${d.title}, ${pagesLabel(u.source.page, u.source.endPage)}`);
     }
     lines.push("");
   }

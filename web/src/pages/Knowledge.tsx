@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
 import type { DocumentDto, Relation, UnitContextDto, UnitDto, UnitType } from "../../../shared/types";
-import { RELATIONS, UNIT_TYPES } from "../../../shared/types";
+import { RELATIONS, UNIT_TYPES, pagesLabel } from "../../../shared/types";
 import { api } from "../api";
-import { Empty, SourceLine, TYPE_LABEL, TypeBadge, useToast } from "../components";
+import { CopyCitation, Empty, ErrorState, Loading, PageHeader, SourceLine, TYPE_LABEL, TypeBadge, useToast } from "../components";
 import { go, href, type Route } from "../router";
 
 const RELATION_LABEL: Record<Relation, string> = {
@@ -17,46 +17,66 @@ export function KnowledgePage({ route }: { route: Route }) {
 }
 
 function UnitList({ route }: { route: Route }) {
-  const toast = useToast();
   const docId = route.params.get("docId") ? Number(route.params.get("docId")) : undefined;
   const type = (route.params.get("type") as UnitType | null) ?? undefined;
   const [units, setUnits] = useState<UnitDto[] | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [doc, setDoc] = useState<DocumentDto | null>(null);
   const [filter, setFilter] = useState("");
 
+  const load = useCallback(() => {
+    setLoadError(null);
+    api.units({ type, docId }).then(setUnits, (e) => setLoadError((e as Error).message));
+  }, [type, docId]);
+
   useEffect(() => {
-    api.units({ type, docId }).then(setUnits).catch((e) => toast((e as Error).message, "error"));
+    setUnits(null);
+    load();
     if (docId) api.document(docId).then(setDoc).catch(() => undefined);
     else setDoc(null);
-  }, [type, docId, toast]);
+  }, [load, docId]);
 
   const shown = (units ?? []).filter((u) => !filter.trim() || `${u.content} ${u.note ?? ""} ${u.sourceText}`.toLowerCase().includes(filter.toLowerCase()));
+  const filtered = !!(type || docId || filter.trim());
 
   return (
     <div className="page narrow">
-      <h2>Knowledge you've kept</h2>
-      <p className="muted">Everything here was accepted by you and stays linked to its exact source.</p>
+      <PageHeader eyebrow="Workshop" title="What you kept">
+        Every quote, idea, concept and question you accepted, each linked to its exact source. Open one to edit it or connect it to others.
+      </PageHeader>
       {doc && (
-        <div className="chip">
+        <div className="chip filter-chip">
           From: {doc.title}{" "}
-          <a href={href("knowledge", { type })} title="Show all">
+          <a href={href("knowledge", { type })} title="Show all documents" aria-label="Show knowledge from all documents">
             ×
           </a>
         </div>
       )}
-      <div className="row" style={{ margin: "12px 0" }}>
-        <a className={`btn ${!type ? "active" : ""}`} href={href("knowledge", { docId })}>
-          All
-        </a>
-        {UNIT_TYPES.map((t) => (
-          <a key={t} className={`btn ${type === t ? "active" : ""}`} href={href("knowledge", { type: t, docId })}>
-            {TYPE_LABEL[t]}s
+      <div className="toolbar">
+        <nav className="segmented" aria-label="Kind of knowledge">
+          <a className={!type ? "active" : ""} aria-current={!type ? "page" : undefined} href={href("knowledge", { docId })}>
+            All
           </a>
-        ))}
-        <input className="filter" placeholder="Filter" value={filter} onChange={(e) => setFilter(e.target.value)} />
+          {UNIT_TYPES.map((t) => (
+            <a key={t} className={type === t ? "active" : ""} aria-current={type === t ? "page" : undefined} href={href("knowledge", { type: t, docId })}>
+              {TYPE_LABEL[t]}s
+            </a>
+          ))}
+        </nav>
+        <input className="filter" type="search" placeholder="Filter by words" value={filter} onChange={(e) => setFilter(e.target.value)} aria-label="Filter what you kept" />
       </div>
-      {units === null && <Empty>Loading…</Empty>}
-      {units && shown.length === 0 && <Empty>Nothing here yet. Open a document, select a passage, and keep a quote or write an idea.</Empty>}
+      {loadError && <ErrorState message={loadError} onRetry={load} />}
+      {!loadError && units === null && <Loading label="Loading what you kept…" />}
+      {units && shown.length === 0 && !filtered && (
+        <Empty title="Nothing kept yet" action={<a className="btn primary-link" href={href("")}>Open your library</a>}>
+          Open a document, select a passage, and keep it as a quote or write an idea. It appears here, linked to its page.
+        </Empty>
+      )}
+      {units && shown.length === 0 && filtered && (
+        <Empty title="Nothing matches" action={<a className="btn" href={href("knowledge")}>Show everything</a>}>
+          Try another kind, or clear the filter.
+        </Empty>
+      )}
       {shown.map((u) => (
         <article key={u.id} className="card">
           <div className="row between">
@@ -76,6 +96,7 @@ function UnitList({ route }: { route: Route }) {
             <a className="btn" href={href(`reader/${u.docId}`, { page: u.page, unit: u.id })}>
               Open source
             </a>
+            <CopyCitation unit={u} />
           </div>
         </article>
       ))}
@@ -118,8 +139,22 @@ function UnitDetail({ id }: { id: number }) {
     }
   };
 
-  if (error) return <div className="page narrow"><div className="note bad">{error}</div><a href={href("knowledge")}>Back</a></div>;
-  if (!ctx) return <div className="page"><Empty>Loading…</Empty></div>;
+  if (error)
+    return (
+      <div className="page narrow">
+        <ErrorState message={error} onRetry={() => void load()}>
+          <a className="btn" href={href("knowledge")}>
+            Back to the Workshop
+          </a>
+        </ErrorState>
+      </div>
+    );
+  if (!ctx)
+    return (
+      <div className="page narrow">
+        <Loading label="Opening…" rows={2} />
+      </div>
+    );
   const u = ctx.unit;
   const before = ctx.paragraph.slice(0, Math.max(0, u.start - ctx.paragraphStart));
   const after = ctx.paragraph.slice(Math.max(0, u.end - ctx.paragraphStart));
@@ -136,14 +171,16 @@ function UnitDetail({ id }: { id: number }) {
 
   return (
     <div className="page narrow">
-      <p>
-        <a href={href("knowledge")}>← All knowledge</a>
-      </p>
+      <nav className="crumbs" aria-label="Breadcrumb">
+        <a href={href("knowledge")}>Workshop</a>
+        <span aria-hidden="true">/</span>
+        <a href={href("knowledge", { type: u.type })}>{TYPE_LABEL[u.type]}s</a>
+      </nav>
       <article className="card">
         <div className="row">
           <TypeBadge type={u.type} />
           <SourceLine unit={u} />
-          {u.origin === "distill" && <span className="chip">proposed by AI, accepted by you{u.edited ? " (edited)" : ""}</span>}
+          {u.origin === "distill" && <span className="chip">suggested by Distill, accepted by you{u.edited ? " (edited)" : ""}</span>}
         </div>
         {u.type === "quote" ? (
           <p className="content">{u.content}</p>
@@ -158,6 +195,7 @@ function UnitDetail({ id }: { id: number }) {
           <a className="btn" href={href(`reader/${u.docId}`, { page: u.page, unit: u.id })}>
             Open in reader
           </a>
+          <CopyCitation unit={u} />
           <a className="btn" href={href("search", { q: u.content })}>
             Find related
           </a>
@@ -177,7 +215,7 @@ function UnitDetail({ id }: { id: number }) {
       <section>
         <h3>Source</h3>
         <p className="muted small">
-          {u.docTitle}, page {u.page}. {u.type === "quote" ? "Author's exact words." : "The passage you were reading."}
+          {u.docTitle}, {pagesLabel(u.page, u.endPage)}. {u.type === "quote" ? "Author's exact words." : "The passage you were reading."}
         </p>
         <div className="paragraph">
           {before}
@@ -198,7 +236,7 @@ function UnitDetail({ id }: { id: number }) {
               </span>{" "}
               <TypeBadge type={l.other.type} /> <a href={href(`knowledge/${l.other.id}`)}>{l.other.content}</a>
               <div className="muted small">
-                {l.other.docTitle}, p. {l.other.page}
+                {l.other.docTitle}, {pagesLabel(l.other.page, l.other.endPage)}
               </div>
             </div>
             <button

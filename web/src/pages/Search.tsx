@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import type { PassageHit, SearchResponse, UnitType } from "../../../shared/types";
 import { UNIT_TYPES } from "../../../shared/types";
 import { api } from "../api";
-import { Empty, Snippet, SourceLine, SuggestionBar, TYPE_LABEL, TypeBadge, WhyLine, useToast, type Suggestion } from "../components";
+import { CopyCitation, Empty, ErrorState, Loading, PageHeader, Snippet, SourceLine, SuggestionBar, TYPE_LABEL, TypeBadge, WhyLine, useToast, type Suggestion } from "../components";
 import { go, href, type Route } from "../router";
 
 export function SearchPage({ route }: { route: Route }) {
@@ -82,7 +82,11 @@ export function SearchPage({ route }: { route: Route }) {
 
   return (
     <div className="page narrow">
+      <PageHeader eyebrow="Search" title="Find it again">
+        Search the way you remember: exact words, or just the gist. What you kept comes first, and every result shows why it matched.
+      </PageHeader>
       <form
+        role="search"
         className="bigsearch"
         onSubmit={(e) => {
           e.preventDefault();
@@ -90,7 +94,7 @@ export function SearchPage({ route }: { route: Route }) {
           go("search", { q: v.trim() });
         }}
       >
-        <input name="q" key={q} defaultValue={q} placeholder='Try: "scarce resource", forgetting AND intervals, title:complexity, type:idea' autoFocus />
+        <input name="q" type="search" key={q} defaultValue={q} placeholder='Try: "scarce resource", forgetting AND intervals, title:complexity, type:idea' aria-label="Search your library" autoFocus />
         <button className="primary" type="submit">
           Search
         </button>
@@ -116,12 +120,23 @@ export function SearchPage({ route }: { route: Route }) {
       </details>
 
       {suggestion && <SuggestionBar s={suggestion} onDone={() => setSuggestion(null)} />}
-      {loading && <div className="muted">Searching…</div>}
-      {error && <div className="note bad">{error}</div>}
-      {!q.trim() && <Empty>Search your sources and everything you've kept. Results always show the passage and the page they came from.</Empty>}
+      {loading && !res && <Loading label="Searching…" rows={2} />}
+      {error && <ErrorState message={error} onRetry={() => void run()} />}
+      {!q.trim() && (
+        <Empty title="What are you looking for?">
+          <p>Results always show the passage and the page they came from. A few ways to start:</p>
+          <div className="row example-queries">
+            {["status:unread", "type:idea", "type:question", "kind:pdf"].map((x) => (
+              <a key={x} className="chip" href={href("search", { q: x })}>
+                {x}
+              </a>
+            ))}
+          </div>
+        </Empty>
+      )}
 
       {res && (
-        <>
+        <div className={loading ? "results stale" : "results"} aria-busy={loading}>
           <div className="interpreted muted small">
             {res.interpreted.structured ? "Exact search" : res.interpreted.mode === "or" ? "Keyword search widened to any word" : "Keyword search"}
             {res.interpreted.semantic === "used" && " + meaning search"}
@@ -136,11 +151,13 @@ export function SearchPage({ route }: { route: Route }) {
             </button>
           </div>
 
-          {empty && <Empty>No results. Try fewer words, or describe the idea differently.</Empty>}
+          {empty && <Empty title="No results">Try fewer words, or describe the idea in your own words.</Empty>}
 
           {totalSaved > 0 && (
             <section>
-              <h2>What you've saved</h2>
+              <h2 className="group-title">
+                What you kept <span className="count">{res.saved.units.length}</span>
+              </h2>
               <div className="countrow">
                 {UNIT_TYPES.filter((t) => res.saved.counts[t] > 0).map((t) => (
                   <span key={t} className={`badge type-${t}`}>
@@ -167,6 +184,7 @@ export function SearchPage({ route }: { route: Route }) {
                     <a className="btn" href={href(`knowledge/${h.unit.id}`)}>
                       Details
                     </a>
+                    <CopyCitation unit={h.unit} />
                   </div>
                 </article>
               ))}
@@ -175,7 +193,9 @@ export function SearchPage({ route }: { route: Route }) {
 
           {res.passages.length > 0 && (
             <section>
-              <h2>Passages</h2>
+              <h2 className="group-title">
+                Passages <span className="count">{res.passages.length}</span>
+              </h2>
               {res.passages.map((p) => (
                 <article key={p.passageId} className="card">
                   <div className="row between">
@@ -232,7 +252,9 @@ export function SearchPage({ route }: { route: Route }) {
 
           {res.files.length > 0 && (
             <section>
-              <h2>Files</h2>
+              <h2 className="group-title">
+                Documents <span className="count">{res.files.length}</span>
+              </h2>
               {res.files.map((f) => (
                 <article key={f.docId} className="card slim row between">
                   <div>
@@ -252,7 +274,7 @@ export function SearchPage({ route }: { route: Route }) {
               ))}
             </section>
           )}
-        </>
+        </div>
       )}
     </div>
   );

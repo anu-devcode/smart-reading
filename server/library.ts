@@ -1,5 +1,5 @@
 import type { Ctx } from "./context.ts";
-import type { DocumentDto, ReadingStatus, PageDto } from "../shared/types.ts";
+import type { DocumentDto, ReadingStatus, PageDto, OcrWordDto } from "../shared/types.ts";
 import { READING_STATUSES } from "../shared/types.ts";
 import { existsSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
@@ -18,7 +18,7 @@ interface DocRow {
   added_at: string;
 }
 
-export function toDocumentDto(row: DocRow, unitCount: number, embeddingPending: boolean): DocumentDto {
+export function toDocumentDto(row: DocRow, unitCount: number, embeddingPending: boolean, ocrPending = 0): DocumentDto {
   return {
     id: row.id,
     title: row.title,
@@ -27,12 +27,17 @@ export function toDocumentDto(row: DocRow, unitCount: number, embeddingPending: 
     kind: row.kind,
     originalName: row.original_name,
     pageCount: row.page_count,
-    processingStatus: row.processing_status,
+    // while scanned pages are still being read the document is still being processed; its notes would be stale
+    processingStatus: ocrPending > 0 ? "processing" : row.processing_status,
     readingStatus: row.reading_status,
-    failureNotes: JSON.parse(row.failure_notes) as string[],
+    failureNotes:
+      ocrPending > 0
+        ? [`Reading ${ocrPending} scanned page${ocrPending > 1 ? "s" : ""} with OCR. Pages become searchable as they are read.`]
+        : (JSON.parse(row.failure_notes) as string[]),
     addedAt: row.added_at,
     unitCount,
     embeddingPending,
+    ocrPending,
   };
 }
 
@@ -44,20 +49,30 @@ export function listDocuments(ctx: Ctx): DocumentDto[] {
     ),
   );
   const pending = ctx.embedJob.pendingDocIds();
-  return rows.map((r) => toDocumentDto(r, counts.get(r.id) ?? 0, pending.has(r.id)));
+  const ocr = ctx.ocrJob.pendingByDoc();
+  return rows.map((r) => toDocumentDto(r, counts.get(r.id) ?? 0, pending.has(r.id), ocr.get(r.id) ?? 0));
 }
 
 export function getDocument(ctx: Ctx, id: number): DocumentDto | null {
   const row = ctx.db.prepare("SELECT * FROM documents WHERE id = ?").get(id) as DocRow | undefined;
   if (!row) return null;
   const c = ctx.db.prepare("SELECT COUNT(*) c FROM units WHERE doc_id = ?").get(id) as { c: number };
-  return toDocumentDto(row, c.c, ctx.embedJob.pendingDocIds().has(id));
+  return toDocumentDto(row, c.c, ctx.embedJob.pendingDocIds().has(id), ctx.ocrJob.pendingByDoc().get(id) ?? 0);
 }
 
 export function getPages(ctx: Ctx, docId: number): PageDto[] {
-  return ctx.db
-    .prepare("SELECT page, text, status FROM pages WHERE doc_id = ? ORDER BY page")
-    .all(docId) as PageDto[];
+  const rows = ctx.db
+    .prepare("SELECT page, text, status, ocr FROM pages WHERE doc_id = ? ORDER BY page")
+    .all(docId) as (Omit<PageDto, "ocr"> & { ocr: number })[];
+  return rows.map((p) => ({ ...p, ocr: p.ocr === 1 }));
+}
+
+/** Word boxes of a page that was read with OCR (for the selectable text layer in the reader). */
+export function getOcrWords(ctx: Ctx, docId: number, page: number): OcrWordDto[] | null {
+  const r = ctx.db
+    .prepare("SELECT o.words w FROM ocr_pages o JOIN pages p ON p.doc_id = o.doc_id AND p.page = o.page WHERE o.doc_id = ? AND o.page = ? AND o.status = 'ok' AND p.ocr = 1")
+    .get(docId, page) as { w: string } | undefined;
+  return r ? (JSON.parse(r.w) as OcrWordDto[]) : null;
 }
 
 export function getPageText(ctx: Ctx, docId: number, page: number): string | null {

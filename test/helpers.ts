@@ -6,15 +6,16 @@ import { createContext, idle, type Ctx } from "../server/context.ts";
 import { importFile } from "../server/ingest/pipeline.ts";
 import { makeFixtures } from "../eval/make-fixtures.ts";
 import type { Embedder } from "../server/search/embeddings.ts";
+import type { OcrEngine } from "../server/ingest/ocr.ts";
 
-export function tempCtx(opts: { embedder?: Embedder | null } = {}): { ctx: Ctx; cleanup: () => void } {
+export function tempCtx(opts: { embedder?: Embedder | null; ocr?: OcrEngine | null } = {}): { ctx: Ctx; cleanup: () => void } {
   const dir = mkdtempSync(join(tmpdir(), "smart-reading-"));
   const cfg = loadConfig({
     libraryDir: dir,
     embeddings: "off",
     ...(opts.embedder ? { embeddingModel: opts.embedder.name } : {}),
   });
-  const ctx = createContext(cfg, { embedder: opts.embedder ?? null });
+  const ctx = createContext(cfg, { embedder: opts.embedder ?? null, ocr: opts.ocr ?? null });
   return {
     ctx,
     cleanup: () => {

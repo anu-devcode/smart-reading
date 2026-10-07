@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
-import type { StatusDto } from "../../shared/types";
-import { api } from "./api";
+import type { AccountDto, SessionDto, StatusDto } from "../../shared/types";
+import { api, SIGNED_OUT } from "./api";
+import { SignInPage } from "./pages/SignIn";
+import { PUBLIC_PAGES, PublicPage } from "./site/Public";
 import { ToastProvider } from "./components";
 import { go, href, useRoute } from "./router";
 import { LibraryPage } from "./pages/Library";
@@ -36,18 +38,81 @@ function useStatus(): StatusDto | null {
 function EmbeddingNote({ s }: { s: StatusDto | null }) {
   if (!s) return null;
   const e = s.embedding;
-  if (e.state === "off") return <span className="muted small">Meaning search off</span>;
+  if (e.state === "off") return <span className="status-pill" title="Search by meaning is turned off. Searching by words works.">Word search</span>;
   if (e.state === "unavailable")
     return (
-      <span className="small warn" title={e.error}>
-        Meaning search unavailable (keyword search still works)
+      <span className="status-pill warn" title={`Search by meaning is unavailable${e.error ? `: ${e.error}` : ""}. Searching by words still works.`}>
+        Word search only
       </span>
     );
-  if (e.pending > 0) return <span className="small muted">Building meaning index… {e.pending} left</span>;
-  return <span className="small muted">Meaning search ready</span>;
+  if (e.pending > 0)
+    return (
+      <span className="status-pill busy" title="Searching by words works now. Search by meaning is still preparing.">
+        Preparing search… {e.pending} left
+      </span>
+    );
+  return (
+    <span className="status-pill ok" title="Search by words and by meaning is ready">
+      Search ready
+    </span>
+  );
 }
 
 export function App() {
+  const route = useRoute();
+  const [session, setSession] = useState<SessionDto | null>(null);
+  const [failed, setFailed] = useState(false);
+  const refresh = () =>
+    api.session().then(
+      (s) => (setSession(s), setFailed(false)),
+      () => setFailed(true),
+    );
+  useEffect(() => {
+    void refresh();
+    const onSignedOut = () => void refresh();
+    window.addEventListener(SIGNED_OUT, onSignedOut);
+    return () => window.removeEventListener(SIGNED_OUT, onSignedOut);
+  }, []);
+
+  if (failed) return <p className="page muted">Cannot reach the Smart Reading server. Is it running?</p>;
+  if (!session) return null;
+  const page = route.path[0] ?? "";
+  const signedIn = !session.accounts || !!session.account;
+  if (!signedIn) {
+    // Signed out: the public site. A link into the app (e.g. a reader page) asks to sign in, then opens it.
+    const signIn = (
+      <SignInPage
+        setup={session.setupNeeded}
+        onSignedIn={(account) => {
+          if (page === "signin") go("");
+          setSession({ ...session, setupNeeded: false, account });
+        }}
+      />
+    );
+    const known = page === "" || PUBLIC_PAGES.includes(page);
+    return (
+      <ToastProvider>
+        <PublicPage page={known ? page : "signin"} signedIn={false} signIn={signIn} />
+      </ToastProvider>
+    );
+  }
+  if (PUBLIC_PAGES.includes(page) && page !== "signin") {
+    return <PublicPage page={page} signedIn signIn={null} />;
+  }
+  if (page === "signin") go("");
+  return (
+    <Shell
+      key={session.account?.id ?? 0}
+      account={session.account}
+      onSignOut={async () => {
+        await api.logout().catch(() => undefined);
+        await refresh();
+      }}
+    />
+  );
+}
+
+function Shell({ account, onSignOut }: { account: AccountDto | null; onSignOut: () => void }) {
   const route = useRoute();
   const status = useStatus();
   const section = route.path[0] ?? "library";
@@ -61,7 +126,7 @@ export function App() {
   if (section === "search") page = <SearchPage route={route} />;
   else if (section === "reader") page = <ReaderPage route={route} status={status} />;
   else if (section === "knowledge") page = <KnowledgePage route={route} />;
-  else if (section === "settings") page = <SettingsPage status={status} />;
+  else if (section === "settings") page = <SettingsPage status={status} account={account} />;
   else page = <LibraryPage />;
 
   const reading = section === "reader";
@@ -71,17 +136,20 @@ export function App() {
         <a className="brand" href={href("")}>
           Smart Reading
         </a>
-        <nav>
+        <nav aria-label="Main">
           {[
-            ["library", "Library", ""],
-            ["search", "Search", "search"],
-            ["knowledge", "Knowledge", "knowledge"],
-            ["settings", "Settings", "settings"],
-          ].map(([key, label, path]) => (
-            <a key={key} href={href(path)} className={section === key || (key === "library" && section === "reader") ? "active" : ""}>
-              {label}
-            </a>
-          ))}
+            ["library", "Library", "", "Your documents, and new ones as they arrive"],
+            ["search", "Search", "search", "Find passages and what you kept"],
+            ["knowledge", "Workshop", "knowledge", "Everything you kept, to edit and connect"],
+            ["settings", "Settings", "settings", "Account and preferences"],
+          ].map(([key, label, path, title]) => {
+            const active = section === key || (key === "library" && section === "reader");
+            return (
+              <a key={key} href={href(path)} title={title} className={active ? "active" : ""} aria-current={active ? "page" : undefined}>
+                {label}
+              </a>
+            );
+          })}
         </nav>
         <form
           className="globalsearch"
@@ -98,6 +166,17 @@ export function App() {
           />
         </form>
         <EmbeddingNote s={status} />
+        {account && (
+          <span className="account small">
+            <a className="muted" href={href("home")}>
+              About
+            </a>
+            <span className="muted">{account.username}</span>
+            <button className="link small" onClick={onSignOut}>
+              Sign out
+            </button>
+          </span>
+        )}
       </header>
       <main className={reading ? "reading" : ""}>{page}</main>
     </ToastProvider>

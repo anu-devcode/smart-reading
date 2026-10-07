@@ -1,11 +1,11 @@
 import type { FastifyInstance } from "fastify";
 import { createReadStream, existsSync } from "node:fs";
 import { join } from "node:path";
-import type { Ctx } from "../context.ts";
 import { importFile, reprocessDocument, UnsupportedFileError } from "../ingest/pipeline.ts";
 import {
   deleteDocument,
   getDocument,
+  getOcrWords,
   getPages,
   listDocuments,
   patchDocument,
@@ -18,27 +18,33 @@ const MIME: Record<string, string> = {
   text: "text/plain; charset=utf-8",
 };
 
-export function registerLibraryRoutes(app: FastifyInstance, ctx: Ctx) {
-  app.get("/api/documents", async () => listDocuments(ctx));
+export function registerLibraryRoutes(app: FastifyInstance) {
+  app.get("/api/documents", async (req) => listDocuments(req.ctx));
 
   app.get<{ Params: { id: string } }>("/api/documents/:id", async (req, reply) => {
-    const doc = getDocument(ctx, Number(req.params.id));
+    const doc = getDocument(req.ctx, Number(req.params.id));
     if (!doc) return reply.status(404).send({ error: "Document not found" });
     return doc;
   });
 
   app.get<{ Params: { id: string } }>("/api/documents/:id/pages", async (req, reply) => {
     const id = Number(req.params.id);
-    if (!getDocument(ctx, id)) return reply.status(404).send({ error: "Document not found" });
-    return getPages(ctx, id);
+    if (!getDocument(req.ctx, id)) return reply.status(404).send({ error: "Document not found" });
+    return getPages(req.ctx, id);
+  });
+
+  app.get<{ Params: { id: string; page: string } }>("/api/documents/:id/pages/:page/ocr-layout", async (req, reply) => {
+    const words = getOcrWords(req.ctx, Number(req.params.id), Number(req.params.page));
+    if (!words) return reply.status(404).send({ error: "This page was not read with OCR" });
+    return { words };
   });
 
   app.get<{ Params: { id: string } }>("/api/documents/:id/file", async (req, reply) => {
-    const row = ctx.db.prepare("SELECT stored_name, kind, original_name FROM documents WHERE id = ?").get(Number(req.params.id)) as
+    const row = req.ctx.db.prepare("SELECT stored_name, kind, original_name FROM documents WHERE id = ?").get(Number(req.params.id)) as
       | { stored_name: string; kind: string; original_name: string }
       | undefined;
     if (!row) return reply.status(404).send({ error: "Document not found" });
-    const file = join(ctx.cfg.originalsDir, row.stored_name);
+    const file = join(req.ctx.cfg.originalsDir, row.stored_name);
     if (!existsSync(file)) return reply.status(404).send({ error: "File missing from library folder" });
     reply.header("Content-Type", MIME[row.kind] ?? "application/octet-stream");
     reply.header("Content-Disposition", `inline; filename="${encodeURIComponent(row.original_name)}"`);
@@ -51,7 +57,7 @@ export function registerLibraryRoutes(app: FastifyInstance, ctx: Ctx) {
     for await (const part of req.files()) {
       const data = await part.toBuffer();
       try {
-        const r = importFile(ctx, { name: part.filename, data });
+        const r = importFile(req.ctx, { name: part.filename, data });
         results.push({ name: part.filename, document: r.document, duplicate: r.duplicate });
       } catch (e) {
         if (e instanceof UnsupportedFileError) results.push({ name: part.filename, error: e.message });
@@ -66,7 +72,7 @@ export function registerLibraryRoutes(app: FastifyInstance, ctx: Ctx) {
     Body: { title?: string; author?: string | null; year?: number | null; readingStatus?: ReadingStatus };
   }>("/api/documents/:id", async (req, reply) => {
     try {
-      const doc = patchDocument(ctx, Number(req.params.id), req.body ?? {});
+      const doc = patchDocument(req.ctx, Number(req.params.id), req.body ?? {});
       if (!doc) return reply.status(404).send({ error: "Document not found" });
       return doc;
     } catch (e) {
@@ -75,7 +81,7 @@ export function registerLibraryRoutes(app: FastifyInstance, ctx: Ctx) {
   });
 
   app.delete<{ Params: { id: string }; Querystring: { force?: string } }>("/api/documents/:id", async (req, reply) => {
-    const res = deleteDocument(ctx, Number(req.params.id), req.query.force === "1");
+    const res = deleteDocument(req.ctx, Number(req.params.id), req.query.force === "1");
     if (res.ok) return { ok: true };
     if (res.unitCount > 0) {
       return reply.status(409).send({
@@ -88,28 +94,28 @@ export function registerLibraryRoutes(app: FastifyInstance, ctx: Ctx) {
 
   app.post<{ Params: { id: string } }>("/api/documents/:id/reprocess", async (req, reply) => {
     const id = Number(req.params.id);
-    if (!getDocument(ctx, id)) return reply.status(404).send({ error: "Document not found" });
-    await reprocessDocument(ctx, id);
-    return getDocument(ctx, id);
+    if (!getDocument(req.ctx, id)) return reply.status(404).send({ error: "Document not found" });
+    await reprocessDocument(req.ctx, id);
+    return getDocument(req.ctx, id);
   });
 
   // ---- collections: saved searches, shown as views (not folders) ----
-  app.get("/api/collections", async (): Promise<CollectionDto[]> => {
-    return ctx.db.prepare("SELECT id, name, query FROM collections ORDER BY name").all() as CollectionDto[];
+  app.get("/api/collections", async (req): Promise<CollectionDto[]> => {
+    return req.ctx.db.prepare("SELECT id, name, query FROM collections ORDER BY name").all() as CollectionDto[];
   });
 
   app.post<{ Body: { name?: string; query?: string } }>("/api/collections", async (req, reply) => {
     const name = req.body?.name?.trim();
     const query = req.body?.query?.trim();
     if (!name || !query) return reply.status(400).send({ error: "name and query are required" });
-    const info = ctx.db
+    const info = req.ctx.db
       .prepare("INSERT INTO collections(name, query, created_at) VALUES (?,?,?)")
       .run(name, query, new Date().toISOString());
     return { id: Number(info.lastInsertRowid), name, query } satisfies CollectionDto;
   });
 
   app.delete<{ Params: { id: string } }>("/api/collections/:id", async (req) => {
-    ctx.db.prepare("DELETE FROM collections WHERE id = ?").run(Number(req.params.id));
+    req.ctx.db.prepare("DELETE FROM collections WHERE id = ?").run(Number(req.params.id));
     return { ok: true };
   });
 }
