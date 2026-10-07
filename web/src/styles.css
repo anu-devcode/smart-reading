@@ -62,7 +62,10 @@ ul.plain li { padding: 3px 0; }
   background: var(--panel); border-bottom: 1px solid var(--line);
   position: sticky; top: 0; z-index: 20;
 }
-.brand { font-weight: 700; color: var(--ink); }
+.brand { display: inline-flex; align-items: center; text-decoration: none; }
+.brand:hover { text-decoration: none; }
+.brand-lockup { height: 28px; width: auto; display: block; }
+.brand-mark { height: 28px; width: auto; display: block; }
 .topbar nav { display: flex; gap: 14px; }
 .topbar nav a { color: var(--muted); padding: 4px 2px; }
 .topbar nav a.active { color: var(--ink); border-bottom: 2px solid var(--accent); }
@@ -174,7 +177,6 @@ blockquote.origin { margin: 6px 0; padding: 4px 10px; border-left: 3px solid var
 .side-item { padding: 8px 0; border-bottom: 1px solid var(--line); }
 
 /* ---------- product polish: same layout, calmer type and clearer focus ---------- */
-.brand { font-family: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif; font-size: 1.12rem; letter-spacing: -0.01em; }
 .page > h2:first-child, .page h2 { font-family: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif; font-weight: 600; letter-spacing: -0.01em; }
 .topbar nav a { transition: color 0.2s; }
 .topbar nav a:hover { color: var(--ink); text-decoration: none; }

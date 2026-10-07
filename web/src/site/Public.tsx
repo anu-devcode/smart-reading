@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
+import { BrandLockup } from "../brand";
 import { href } from "../router";
 import "./site.css";
 
@@ -51,9 +52,8 @@ export function PublicLayout({ page, signedIn, children }: { page: string; signe
         Skip to content
       </a>
       <header className="site-head">
-        <a className="site-brand" href={href(signedIn ? "home" : "")} aria-label="Smart Reading, home">
-          <BrandMark />
-          Smart Reading
+        <a className="site-brand" href={href(signedIn ? "home" : "")} aria-label="Anbabi, home">
+          <BrandLockup />
         </a>
         <button className="site-menu" aria-expanded={open} aria-controls="site-nav" onClick={() => setOpen(!open)}>
           Menu
@@ -83,12 +83,8 @@ export function PublicLayout({ page, signedIn, children }: { page: string; signe
       <main id="site-main">{children}</main>
       <footer className="site-foot">
         <div className="foot-brand">
-          <BrandMark />
-          <p>
-            <strong>Smart Reading</strong>
-            <br />
-            <span className="muted">Read deeply. Keep what matters. Find it again.</span>
-          </p>
+          <BrandLockup />
+          <p className="muted">Read deeply. Keep what matters. Find it again.</p>
         </div>
         <nav aria-label="Product">
           <h4>Product</h4>
@@ -109,16 +105,6 @@ export function PublicLayout({ page, signedIn, children }: { page: string; signe
         </nav>
       </footer>
     </div>
-  );
-}
-
-function BrandMark() {
-  return (
-    <svg className="brand-mark" viewBox="0 0 32 32" aria-hidden="true">
-      <path d="M5 7.5c4-1.6 7.6-1.3 11 1v17c-3.4-2.3-7-2.6-11-1z" fill="currentColor" opacity=".85" />
-      <path d="M27 7.5c-4-1.6-7.6-1.3-11 1v17c3.4-2.3 7-2.6 11-1z" fill="currentColor" opacity=".45" />
-      <rect x="18.5" y="12" width="6" height="2.4" rx="1.2" fill="var(--hl-strong)" />
-    </svg>
   );
 }
 
@@ -359,7 +345,7 @@ export function Landing({ signedIn }: { signedIn: boolean }) {
             Read deeply. <em>Keep what matters.</em> Find it again.
           </h1>
           <p className="lede reveal in">
-            Smart Reading is a calm home for the PDFs and notes you read. Highlight a sentence, keep it as a quote or an idea, and it stays tied to the exact page it came from — so years later you can find it, trust it and use it.
+            Anbabi is a calm home for the PDFs and notes you read. Highlight a sentence, keep it as a quote or an idea, and it stays tied to the exact page it came from — so years later you can find it, trust it and use it.
           </p>
           <div className="reveal in">
             <Cta signedIn={signedIn} />
@@ -443,7 +429,7 @@ function Article({ eyebrow, title, lede, children }: { eyebrow: string; title: s
 export function HowItWorks({ signedIn }: { signedIn: boolean }) {
   return (
     <>
-      <Article eyebrow="How it works" title="Five steps, the way you already read." lede="Smart Reading does not ask you to learn a system. You read, you keep what matters, and it remembers where everything came from.">
+      <Article eyebrow="How it works" title="Five steps, the way you already read." lede="Anbabi does not ask you to learn a system. You read, you keep what matters, and it remembers where everything came from.">
         <span />
       </Article>
       <div className="how-list">
@@ -504,7 +490,7 @@ export function Features({ signedIn }: { signedIn: boolean }) {
 
 export function About() {
   return (
-    <Article eyebrow="About" title="We read a lot. We forgot most of it." lede="Smart Reading began with a simple frustration: we highlighted, we took notes, and months later we could not find them — or could not remember where they came from.">
+    <Article eyebrow="About" title="We read a lot. We forgot most of it." lede="Anbabi began with a simple frustration: we highlighted, we took notes, and months later we could not find them — or could not remember where they came from.">
       <h2>Why it exists</h2>
       <p>Most tools either keep everything, so nothing stands out, or rewrite your reading into summaries you never chose. We wanted the opposite: a place where only what you decide to keep becomes part of your knowledge, and where every note can be checked against its source.</p>
       <h2>What we believe</h2>
@@ -515,7 +501,7 @@ export function About() {
         <li><strong>Simple beats clever.</strong> Few kinds of notes, few kinds of connections, no folders to maintain.</li>
       </ul>
       <h2>Who makes it</h2>
-      <p>Smart Reading is a small, independent project, built carefully and slowly. It is designed for people who read to learn: students, researchers, professionals and curious readers.</p>
+      <p>Anbabi is a small, independent project, built carefully and slowly. It is designed for people who read to learn: students, researchers, professionals and curious readers.</p>
     </Article>
   );
 }
@@ -524,11 +510,11 @@ const FAQ: [string, string][] = [
   ["What kinds of files can I add?", "PDFs, Markdown (.md) and plain text (.txt). Scanned PDFs work too: their pages are read with text recognition and clearly marked."],
   ["Does it summarise or rewrite my documents?", "No. Nothing is generated when you add a file. You decide what to keep. If you want, you can ask for suggestions on a passage you selected — but nothing is saved unless you accept it."],
   ["What is the difference between a highlight and a quote?", "A highlight is a mark on the page, like a pen. A quote is something you keep: it joins your knowledge, shows up first in search, and can be copied with its citation."],
-  ["Can I find something if I don’t remember the exact words?", "Yes. Describe the idea in your own words and Smart Reading looks for passages and notes with a similar meaning. Each result tells you whether it matched your words or your meaning."],
+  ["Can I find something if I don’t remember the exact words?", "Yes. Describe the idea in your own words and Anbabi looks for passages and notes with a similar meaning. Each result tells you whether it matched your words or your meaning."],
   ["Can other people see my library?", "No. Every account has its own separate library. The person who runs the server can add or remove accounts, but the app never shows one person’s documents or notes to another."],
-  ["Where is my data stored?", "On the computer or server where Smart Reading runs — not on ours. You can export everything to a readable file or make a full backup at any time."],
+  ["Where is my data stored?", "On the computer or server where Anbabi runs — not on ours. You can export everything to a readable file or make a full backup at any time."],
   ["Do I need an internet connection?", "Not for reading, keeping or searching. The optional suggestions use a service you choose, which may be online or on your own computer."],
-  ["Can I use it on my phone or tablet?", "Smart Reading works in the browser. If the person who runs it makes it reachable from other devices, you can sign in from a phone, tablet or another computer and find the same library."],
+  ["Can I use it on my phone or tablet?", "Anbabi works in the browser. If the person who runs it makes it reachable from other devices, you can sign in from a phone, tablet or another computer and find the same library."],
 ];
 
 export function Faq() {
@@ -551,19 +537,19 @@ export function Faq() {
 
 export function Contact() {
   return (
-    <Article eyebrow="Contact" title="We’d like to hear from you." lede="Smart Reading runs on your own computer or on a server run by someone you know, so help usually starts close to home.">
+    <Article eyebrow="Contact" title="We’d like to hear from you." lede="Anbabi runs on your own computer or on a server run by someone you know, so help usually starts close to home.">
       <div className="two">
         <section className="panel-soft">
           <h3>Help with your account</h3>
-          <p>Forgotten password, a new account, or a library that needs restoring: ask the person who runs your Smart Reading server. They can set a new password for you from Settings.</p>
+          <p>Forgotten password, a new account, or a library that needs restoring: ask the person who runs your Anbabi server. They can set a new password for you from Settings.</p>
         </section>
         <section className="panel-soft">
           <h3>Running your own server</h3>
-          <p>Setup, backups and moving to a new computer are covered step by step in the guide that comes with Smart Reading (the README file).</p>
+          <p>Setup, backups and moving to a new computer are covered step by step in the guide that comes with Anbabi (the README file).</p>
         </section>
       </div>
       <h2>Ideas and feedback</h2>
-      <p>If something felt confusing, or you wish Smart Reading did one thing differently, tell the person who shared it with you. Small, specific notes — “I expected this button to…” — help the most.</p>
+      <p>If something felt confusing, or you wish Anbabi did one thing differently, tell the person who shared it with you. Small, specific notes — “I expected this button to…” — help the most.</p>
     </Article>
   );
 }
@@ -572,15 +558,15 @@ export function Privacy() {
   return (
     <Article eyebrow="Privacy" title="Privacy, in plain words." lede="Short version: your reading stays with you. There is no tracking, no advertising and no account with us.">
       <h2>What is stored, and where</h2>
-      <p>Your documents, highlights, notes and settings are stored on the computer or server where Smart Reading runs. Each account has its own separate library. Your password is never stored — only a secure fingerprint of it.</p>
+      <p>Your documents, highlights, notes and settings are stored on the computer or server where Anbabi runs. Each account has its own separate library. Your password is never stored — only a secure fingerprint of it.</p>
       <h2>What leaves your library</h2>
       <ul className="nice">
-        <li><strong>Nothing, by default.</strong> Reading, keeping, searching and reading scanned pages all happen where Smart Reading runs.</li>
+        <li><strong>Nothing, by default.</strong> Reading, keeping, searching and reading scanned pages all happen where Anbabi runs.</li>
         <li><strong>Optional suggestions.</strong> Only if you set up a suggestion service and press the button, the passage you selected is sent to the service you chose. You can use one that runs on your own computer.</li>
         <li><strong>One-time downloads.</strong> The first time they are needed, the language files for search and scanned pages are downloaded. No reading data is sent.</li>
       </ul>
       <h2>What we count</h2>
-      <p>Inside your own library, Smart Reading quietly notes whether suggestions were accepted, edited or dismissed, to judge if they are useful. This stays in your library and is never sent anywhere.</p>
+      <p>Inside your own library, Anbabi quietly notes whether suggestions were accepted, edited or dismissed, to judge if they are useful. This stays in your library and is never sent anywhere.</p>
       <h2>Your control</h2>
       <p>You can export everything at any time, delete any document or note, and ask the server owner to remove your account — which deletes your whole library.</p>
     </Article>
@@ -589,15 +575,15 @@ export function Privacy() {
 
 export function Terms() {
   return (
-    <Article eyebrow="Terms" title="Terms of use." lede="Simple terms for a simple tool. If you run a Smart Reading server for others, these describe what everyone can expect.">
+    <Article eyebrow="Terms" title="Terms of use." lede="Simple terms for a simple tool. If you run an Anbabi server for others, these describe what everyone can expect.">
       <h2>Your content</h2>
-      <p>Everything you add and write remains yours. Smart Reading only stores and indexes it so that you can read, keep and find it. Please only add documents you have the right to use.</p>
+      <p>Everything you add and write remains yours. Anbabi only stores and indexes it so that you can read, keep and find it. Please only add documents you have the right to use.</p>
       <h2>Accounts</h2>
       <p>The person who runs the server creates accounts and is responsible for keeping the server and its backups safe. Keep your password to yourself; you are responsible for what is done with your account.</p>
       <h2>Suggestions</h2>
       <p>Optional suggestions come from a service you choose and may be wrong. They are never saved unless you accept them. Always check important quotes against the source — one click opens it.</p>
       <h2>No warranty</h2>
-      <p>Smart Reading is provided as it is. We work hard to keep your notes accurate and safe, but please keep regular backups of anything that matters to you.</p>
+      <p>Anbabi is provided as it is. We work hard to keep your notes accurate and safe, but please keep regular backups of anything that matters to you.</p>
       <h2>Changes</h2>
       <p>If these terms change, the new version will be shown here.</p>
     </Article>
@@ -626,7 +612,7 @@ export function Security() {
         </section>
       </div>
       <h2>For the person running the server</h2>
-      <p>By default Smart Reading only answers on the computer it runs on. If you open it to other devices, put a secure (HTTPS) connection in front of it, and keep regular backups. The guide that comes with Smart Reading explains both.</p>
+      <p>By default Anbabi only answers on the computer it runs on. If you open it to other devices, put a secure (HTTPS) connection in front of it, and keep regular backups. The guide that comes with Anbabi explains both.</p>
     </Article>
   );
 }

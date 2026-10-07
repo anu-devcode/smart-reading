@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import type { AccountDto, SessionDto, StatusDto } from "../../shared/types";
 import { api, SIGNED_OUT } from "./api";
 import { SignInPage } from "./pages/SignIn";
+import { BrandLockup } from "./brand";
 import { PUBLIC_PAGES, PublicPage } from "./site/Public";
 import { ToastProvider } from "./components";
 import { go, href, useRoute } from "./router";
@@ -74,7 +75,7 @@ export function App() {
     return () => window.removeEventListener(SIGNED_OUT, onSignedOut);
   }, []);
 
-  if (failed) return <p className="page muted">Cannot reach the Smart Reading server. Is it running?</p>;
+  if (failed) return <p className="page muted">Cannot reach the Anbabi server. Is it running?</p>;
   if (!session) return null;
   const page = route.path[0] ?? "";
   const signedIn = !session.accounts || !!session.account;
@@ -133,8 +134,8 @@ function Shell({ account, onSignOut }: { account: AccountDto | null; onSignOut: 
   return (
     <ToastProvider>
       <header className="topbar">
-        <a className="brand" href={href("")}>
-          Smart Reading
+        <a className="brand" href={href("")} aria-label="Anbabi, home">
+          <BrandLockup />
         </a>
         <nav aria-label="Main">
           {[

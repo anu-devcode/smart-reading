@@ -34,9 +34,10 @@
   backdrop-filter: saturate(1.4) blur(12px); -webkit-backdrop-filter: saturate(1.4) blur(12px);
   border-bottom: 1px solid var(--rule);
 }
-.site-brand { display: flex; align-items: center; gap: 10px; font-family: var(--serif); font-size: 1.18rem; font-weight: 600; color: var(--ink); }
+.site-brand { display: flex; align-items: center; }
 .site-brand:hover { text-decoration: none; }
-.brand-mark { width: 28px; height: 28px; color: var(--accent); flex: none; }
+.brand-lockup { height: 34px; width: auto; display: block; }
+.brand-mark { height: 34px; width: auto; display: block; }
 .site-head nav { margin-left: auto; display: flex; align-items: center; gap: 26px; }
 .site-head nav a { color: var(--ink-2); font-size: 0.94rem; position: relative; }
 .site-head nav a:hover { color: var(--ink); text-decoration: none; }
@@ -207,7 +208,8 @@ ul.nice strong { color: var(--ink); }
 
 /* footer */
 .site-foot { display: grid; grid-template-columns: 2fr 1fr 1fr 1fr; gap: 28px; padding: 54px clamp(18px, 5vw, 72px) 64px; border-top: 1px solid var(--rule); max-width: 1320px; margin: 0 auto; }
-.foot-brand { display: flex; gap: 12px; align-items: flex-start; }
+.foot-brand { display: flex; flex-direction: column; gap: 10px; align-items: flex-start; }
+.foot-brand .brand-lockup { height: 42px; }
 .foot-brand p { margin: 0; }
 .site-foot nav { display: flex; flex-direction: column; gap: 8px; }
 .site-foot h4 { margin: 0 0 6px; font-size: 0.74rem; letter-spacing: 0.14em; text-transform: uppercase; color: var(--muted); }

@@ -36,7 +36,7 @@ if (cfg.accounts === "off") {
 
 await app.listen({ port: cfg.port, host: cfg.host });
 const shown = isLocalHost(cfg.host) ? "localhost" : cfg.host;
-console.log(`Smart Reading is running at http://${shown}:${cfg.port}`);
+console.log(`Anbabi is running at http://${shown}:${cfg.port}`);
 console.log(`Library folder: ${cfg.libraryDir}`);
 console.log(`Accounts: ${cfg.accounts === "off" ? "off (one library, this computer only)" : "on"}`);
 console.log(`Meaning search: ${cfg.embeddings === "on" ? cfg.embeddingModel : "off"}`);

@@ -1,4 +1,4 @@
-# Smart Reading
+# Anbabi
 
 A local-first place to read, search and keep what you learn.
 
