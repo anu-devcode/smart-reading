@@ -5,6 +5,7 @@ import react from "@vitejs/plugin-react";
 export default defineConfig({
   root: "web",
   plugins: [react()],
+  css: { postcss: { plugins: [] } },
   build: { outDir: "../web-dist", emptyOutDir: true, chunkSizeWarningLimit: 2000 },
   server: {
     port: 5173,

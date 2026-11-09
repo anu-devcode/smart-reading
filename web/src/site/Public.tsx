@@ -555,8 +555,9 @@ export function Contact() {
 }
 
 export function Privacy() {
+  const [statisticsOff, setStatisticsOff] = useState(() => { try { return localStorage.getItem("siteMetrics.disabled") === "true"; } catch { return false; } });
   return (
-    <Article eyebrow="Privacy" title="Privacy, in plain words." lede="Short version: your reading stays with you. There is no tracking, no advertising and no account with us.">
+    <Article eyebrow="Privacy" title="Privacy, in plain words." lede="Short version: your reading stays with you. Your documents and notes are never sent to visit analytics. There is no advertising.">
       <h2>What is stored, and where</h2>
       <p>Your documents, highlights, notes and settings are stored on the computer or server where Anbabi runs. Each account has its own separate library. Your password is never stored — only a secure fingerprint of it.</p>
       <h2>What leaves your library</h2>
@@ -565,7 +566,10 @@ export function Privacy() {
         <li><strong>Optional suggestions.</strong> Only if you set up a suggestion service and press the button, the passage you selected is sent to the service you chose. You can use one that runs on your own computer.</li>
         <li><strong>One-time downloads.</strong> The first time they are needed, the language files for search and scanned pages are downloaded. No reading data is sent.</li>
       </ul>
-      <h2>What we count</h2>
+      <h2>Anonymous website visits</h2>
+      <p>This hosted site counts anonymous visits using random browser identifiers. Page paths, search terms, document names, notes, account details, campaigns and click events are not collected. Do Not Track and Global Privacy Control are respected. Self-hosted installations should remove this website tracker unless their operator enables it deliberately.</p>
+      <button type="button" onClick={() => { const off = !statisticsOff; try { localStorage.setItem("siteMetrics.disabled", String(off)); setStatisticsOff(off); window.location.reload(); } catch { setStatisticsOff(true); } }}>{statisticsOff ? "Turn on anonymous visit statistics" : "Turn off anonymous visit statistics"}</button>
+      <h2>What stays in your library</h2>
       <p>Inside your own library, Anbabi quietly notes whether suggestions were accepted, edited or dismissed, to judge if they are useful. This stays in your library and is never sent anywhere.</p>
       <h2>Your control</h2>
       <p>You can export everything at any time, delete any document or note, and ask the server owner to remove your account — which deletes your whole library.</p>
