@@ -1,0 +1,13 @@
+/* Public website analytics preferences */
+.analytics-consent {
+  position: fixed; z-index: 100; bottom: 16px; left: 16px; right: 16px;
+  max-width: 540px; margin-left: auto; padding: 18px;
+  background: var(--paper); color: var(--ink); border: 1px solid var(--rule);
+  border-radius: 12px; box-shadow: 0 8px 30px #0002;
+}
+.analytics-consent p { margin: 0 0 14px; font: 400 0.95rem/1.6 system-ui, sans-serif; }
+.analytics-consent a { text-decoration: underline; }
+.analytics-consent > div { display: flex; flex-wrap: wrap; gap: 12px; }
+.analytics-consent button { min-height: 44px; padding: 8px 14px; color: var(--ink); background: var(--paper-2); border: 1px solid var(--rule); border-radius: 6px; cursor: pointer; }
+.analytics-consent button:focus-visible, .analytics-preferences:focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; }
+.analytics-preferences { padding: 0; border: 0; background: none; color: var(--ink-2); text-decoration: underline; font: inherit; cursor: pointer; text-align: left; }

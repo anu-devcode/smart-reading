@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { BrandLockup } from "../brand";
 import { href } from "../router";
 import "./site.css";
+import { PublicAnalytics } from "./PublicAnalytics";
 
 export const PUBLIC_PAGES = ["home", "how-it-works", "features", "about", "faq", "contact", "privacy", "terms", "security", "signin"];
 
@@ -99,6 +100,7 @@ export function PublicLayout({ page, signedIn, children }: { page: string; signe
         </nav>
         <nav aria-label="Trust">
           <h4>Trust</h4>
+          <PublicAnalytics page={page} />
           <a href={href("privacy")}>Privacy</a>
           <a href={href("security")}>Security</a>
           <a href={href("terms")}>Terms</a>
@@ -569,6 +571,8 @@ export function Privacy() {
       <h2>Anonymous website visits</h2>
       <p>This hosted site counts anonymous visits using random browser identifiers. Page paths, search terms, document names, notes, account details, campaigns and click events are not collected. Do Not Track and Global Privacy Control are respected. Self-hosted installations should remove this website tracker unless their operator enables it deliberately.</p>
       <button type="button" onClick={() => { const off = !statisticsOff; try { localStorage.setItem("siteMetrics.disabled", String(off)); setStatisticsOff(off); window.location.reload(); } catch { setStatisticsOff(true); } }}>{statisticsOff ? "Turn on anonymous visit statistics" : "Turn off anonymous visit statistics"}</button>
+      <h2>Optional Google Analytics</h2>
+      <p>With your permission, Google Analytics measures visits to public pages using cookies. It receives the public website address and technical visit information. You can change your choice using Analytics preferences in the footer. Reading pages, document names, searches, notes and account details are excluded. Browser privacy signals and your anonymous statistics preference are respected.</p>
       <h2>What stays in your library</h2>
       <p>Inside your own library, Anbabi quietly notes whether suggestions were accepted, edited or dismissed, to judge if they are useful. This stays in your library and is never sent anywhere.</p>
       <h2>Your control</h2>
